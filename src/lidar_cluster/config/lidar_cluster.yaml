@@ -5,4 +5,4 @@ lidar_cluster_node:
     eps: 0.7
     min_points: 2
     debug_mode: true
-    ground_z_threshold: -2.5 
+    ground_z_threshold: -2.5
