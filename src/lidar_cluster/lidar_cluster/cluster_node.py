@@ -310,7 +310,7 @@ class LidarClusterNode(Node):
         try:
             marker_array = MarkerArray()
             test_marker = Marker()
-            test_marker.header.frame_id = "map"
+            test_marker.header.frame_id = "base_link"
             test_marker.header.stamp = stamp
             test_marker.ns = "test_markers"
             test_marker.id = 999
@@ -341,7 +341,7 @@ class LidarClusterNode(Node):
                     
                     for i, centroid in enumerate(cone_centroids):
                         mesh_marker = Marker()
-                        mesh_marker.header.frame_id = "map"
+                        mesh_marker.header.frame_id = "base_link"
                         mesh_marker.header.stamp = stamp
                         mesh_marker.ns = "cone_mesh_markers"
                         mesh_marker.id = i
@@ -368,7 +368,7 @@ class LidarClusterNode(Node):
                 self.get_logger().warn(f"Error with mesh markers, using cylinders instead: {e}")
                 for i, centroid in enumerate(cone_centroids):
                     cylinder = Marker()
-                    cylinder.header.frame_id = "map"
+                    cylinder.header.frame_id = "base_link"
                     cylinder.header.stamp = stamp
                     cylinder.ns = "cone_cylinder_markers"
                     cylinder.id = i
