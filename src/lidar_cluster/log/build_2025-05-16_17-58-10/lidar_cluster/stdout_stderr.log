@@ -1,0 +1,23 @@
+running egg_info
+creating build/lidar_cluster/lidar_cluster.egg-info
+writing build/lidar_cluster/lidar_cluster.egg-info/PKG-INFO
+writing dependency_links to build/lidar_cluster/lidar_cluster.egg-info/dependency_links.txt
+writing entry points to build/lidar_cluster/lidar_cluster.egg-info/entry_points.txt
+writing requirements to build/lidar_cluster/lidar_cluster.egg-info/requires.txt
+writing top-level names to build/lidar_cluster/lidar_cluster.egg-info/top_level.txt
+writing manifest file 'build/lidar_cluster/lidar_cluster.egg-info/SOURCES.txt'
+reading manifest file 'build/lidar_cluster/lidar_cluster.egg-info/SOURCES.txt'
+writing manifest file 'build/lidar_cluster/lidar_cluster.egg-info/SOURCES.txt'
+running build
+running install
+running install_data
+creating /home/aditya/hydrakon_ws/src/lidar_cluster/install/lidar_cluster/share/ament_index
+creating /home/aditya/hydrakon_ws/src/lidar_cluster/install/lidar_cluster/share/ament_index/resource_index
+creating /home/aditya/hydrakon_ws/src/lidar_cluster/install/lidar_cluster/share/ament_index/resource_index/packages
+copying resource/lidar_cluster -> /home/aditya/hydrakon_ws/src/lidar_cluster/install/lidar_cluster/share/ament_index/resource_index/packages
+copying package.xml -> /home/aditya/hydrakon_ws/src/lidar_cluster/install/lidar_cluster/share/lidar_cluster
+running install_egg_info
+Copying build/lidar_cluster/lidar_cluster.egg-info to /home/aditya/hydrakon_ws/src/lidar_cluster/install/lidar_cluster/lib/python3.10/site-packages/lidar_cluster-0.0.0-py3.10.egg-info
+running install_scripts
+Installing lidar_cluster_node script to /home/aditya/hydrakon_ws/src/lidar_cluster/install/lidar_cluster/lib/lidar_cluster
+writing list of installed files to '/home/aditya/hydrakon_ws/src/lidar_cluster/build/lidar_cluster/install.log'

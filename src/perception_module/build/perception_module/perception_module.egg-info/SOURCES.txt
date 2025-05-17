@@ -1,0 +1,17 @@
+package.xml
+setup.cfg
+setup.py
+build/perception_module/perception_module.egg-info/PKG-INFO
+build/perception_module/perception_module.egg-info/SOURCES.txt
+build/perception_module/perception_module.egg-info/dependency_links.txt
+build/perception_module/perception_module.egg-info/entry_points.txt
+build/perception_module/perception_module.egg-info/requires.txt
+build/perception_module/perception_module.egg-info/top_level.txt
+build/perception_module/perception_module.egg-info/zip-safe
+config/perception_params.yaml
+launch/perception_launch.py
+perception_module/__init__.py
+perception_module/perception_node.py
+test/test_copyright.py
+test/test_flake8.py
+test/test_pep257.py

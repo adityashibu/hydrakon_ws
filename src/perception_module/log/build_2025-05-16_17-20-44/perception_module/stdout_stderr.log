@@ -1,0 +1,35 @@
+running egg_info
+creating build/perception_module/perception_module.egg-info
+writing build/perception_module/perception_module.egg-info/PKG-INFO
+writing dependency_links to build/perception_module/perception_module.egg-info/dependency_links.txt
+writing entry points to build/perception_module/perception_module.egg-info/entry_points.txt
+writing requirements to build/perception_module/perception_module.egg-info/requires.txt
+writing top-level names to build/perception_module/perception_module.egg-info/top_level.txt
+writing manifest file 'build/perception_module/perception_module.egg-info/SOURCES.txt'
+reading manifest file 'build/perception_module/perception_module.egg-info/SOURCES.txt'
+writing manifest file 'build/perception_module/perception_module.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build
+creating /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib
+creating /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module
+copying perception_module/__init__.py -> /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module
+copying perception_module/perception_node.py -> /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module
+running install
+running install_lib
+creating /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module
+copying /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module/__init__.py -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module
+copying /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module/perception_node.py -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module
+byte-compiling /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module/__init__.py to __init__.cpython-310.pyc
+byte-compiling /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module/perception_node.py to perception_node.cpython-310.pyc
+running install_data
+copying package.xml -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module
+creating /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module/launch
+copying launch/perception_launch.py -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module/launch
+creating /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module/config
+copying config/perception_params.yaml -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module/config
+running install_egg_info
+Copying build/perception_module/perception_module.egg-info to /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module-0.0.0-py3.10.egg-info
+running install_scripts
+Installing perception_node script to /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/perception_module
+writing list of installed files to '/home/aditya/hydrakon_ws/src/perception_module/build/perception_module/install.log'

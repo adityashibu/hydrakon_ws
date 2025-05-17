@@ -1,0 +1,37 @@
+[0.745s] Invoking command in '/home/aditya/hydrakon_ws/src/perception_module': PYTHONPATH=/home/aditya/hydrakon_ws/src/perception_module/build/perception_module/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/perception_module build --build-base /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build install --record /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/install.log --single-version-externally-managed install_data
+[0.986s] running egg_info
+[0.986s] creating build/perception_module/perception_module.egg-info
+[0.986s] writing build/perception_module/perception_module.egg-info/PKG-INFO
+[0.986s] writing dependency_links to build/perception_module/perception_module.egg-info/dependency_links.txt
+[0.986s] writing entry points to build/perception_module/perception_module.egg-info/entry_points.txt
+[0.987s] writing requirements to build/perception_module/perception_module.egg-info/requires.txt
+[0.987s] writing top-level names to build/perception_module/perception_module.egg-info/top_level.txt
+[0.987s] writing manifest file 'build/perception_module/perception_module.egg-info/SOURCES.txt'
+[0.988s] reading manifest file 'build/perception_module/perception_module.egg-info/SOURCES.txt'
+[0.989s] writing manifest file 'build/perception_module/perception_module.egg-info/SOURCES.txt'
+[0.990s] running build
+[0.990s] running build_py
+[0.990s] creating /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build
+[0.990s] creating /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib
+[0.990s] creating /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module
+[0.990s] copying perception_module/__init__.py -> /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module
+[0.990s] copying perception_module/perception_node.py -> /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module
+[0.990s] running install
+[0.990s] running install_lib
+[0.991s] creating /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module
+[0.991s] copying /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module/__init__.py -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module
+[0.991s] copying /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build/lib/perception_module/perception_node.py -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module
+[0.991s] byte-compiling /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module/__init__.py to __init__.cpython-310.pyc
+[0.992s] byte-compiling /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module/perception_node.py to perception_node.cpython-310.pyc
+[0.992s] running install_data
+[0.992s] copying package.xml -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module
+[0.992s] creating /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module/launch
+[0.992s] copying launch/perception_launch.py -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module/launch
+[0.992s] creating /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module/config
+[0.992s] copying config/perception_params.yaml -> /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/share/perception_module/config
+[0.992s] running install_egg_info
+[0.994s] Copying build/perception_module/perception_module.egg-info to /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages/perception_module-0.0.0-py3.10.egg-info
+[0.994s] running install_scripts
+[1.016s] Installing perception_node script to /home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/perception_module
+[1.016s] writing list of installed files to '/home/aditya/hydrakon_ws/src/perception_module/build/perception_module/install.log'
+[1.053s] Invoked command in '/home/aditya/hydrakon_ws/src/perception_module' returned '0': PYTHONPATH=/home/aditya/hydrakon_ws/src/perception_module/build/perception_module/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/aditya/hydrakon_ws/src/perception_module/install/perception_module/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/perception_module build --build-base /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/build install --record /home/aditya/hydrakon_ws/src/perception_module/build/perception_module/install.log --single-version-externally-managed install_data

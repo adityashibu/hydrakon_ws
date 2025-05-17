@@ -1,0 +1,3 @@
+[console_scripts]
+lidar_cluster_node = cluster_node:main
+
