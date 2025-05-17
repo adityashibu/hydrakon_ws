@@ -17,5 +17,13 @@ def generate_launch_description():
             name='ins_node',
             output='screen',
             parameters=['config/ins_params.yaml']
+        ),
+
+        Node(
+            package='carla_vehicle_manager',
+            executable='gnss_node',
+            name='gnss_node',
+            output='screen',
+            parameters=['config/gnss_params.yaml']
         )
     ])

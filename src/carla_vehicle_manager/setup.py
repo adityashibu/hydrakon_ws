@@ -9,7 +9,11 @@ setup(
     data_files=[
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/vehicle_launch.py']),
-        ('share/' + package_name + '/config', ['config/vehicle_params.yaml']),
+        ('share/' + package_name + '/config', [
+            'config/vehicle_params.yaml',
+            'config/imu_params.yaml',
+            'config/gnss_params.yaml',
+        ]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -22,6 +26,7 @@ setup(
         'console_scripts': [
             'vehicle_node = carla_vehicle_manager.vehicle_node:main',
             'imu_node = carla_vehicle_manager.imu_node:main',
+            'gnss_node = carla_vehicle_manager.gnss_node:main',
         ],
     },
 )

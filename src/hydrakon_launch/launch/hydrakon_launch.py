@@ -52,6 +52,19 @@ def generate_launch_description():
             period=2.0,
             actions=[
                 Node(
+                    package='carla_vehicle_manager',
+                    executable='gnss_node',
+                    name='carla_gnss_node',
+                    output='screen',
+                    parameters=['config/gnss_params.yaml']
+                )
+            ]
+        ),
+        
+        TimerAction(
+            period=2.0,
+            actions=[
+                Node(
                     package='lidar_handler',
                     executable='lidar_node',
                     name='lidar_handler',
