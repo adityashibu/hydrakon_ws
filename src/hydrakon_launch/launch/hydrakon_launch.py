@@ -69,7 +69,7 @@ def generate_launch_description():
                     executable='navsat_transform_node',
                     name='navsat_transform_node',
                     output='screen',
-                    parameters=['config/navsat_params.yaml']
+                    parameters=['/home/aditya/hydrakon_ws/src/perception_module/config/navsat_params.yaml']
                 )
             ]
         ),

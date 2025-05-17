@@ -145,13 +145,6 @@ class NavsatTransformNode(Node):
             if self.latest_imu_msg is not None:
                 q = self.latest_imu_msg.orientation
                 yaw = self.get_yaw_from_quaternion(q)
-            
-            self.set_datum(msg.latitude, msg.longitude, yaw)
-
-        if self.latest_imu_msg is not None:
-            q = self.latest_imu_msg.orientation
-            yaw = self.get_yaw_from_quaternion(q)
-            # self.get_logger().info(f"Yaw from IMU quaternion: {yaw}")
             self.set_datum(msg.latitude, msg.longitude, yaw)
     
     def odom_callback(self, msg):
@@ -201,9 +194,11 @@ class NavsatTransformNode(Node):
         try:
             # Convert GPS to UTM
             utm_x, utm_y = self.utm_proj(gps_msg.longitude, gps_msg.latitude)
+            self.get_logger().info(f"UTM raw: x={utm_x}, y={utm_y}")
             
             map_x = utm_x - self.utm_origin_x
             map_y = utm_y - self.utm_origin_y
+            self.get_logger().info(f"Delta map: x={map_x}, y={map_y}")
             
             cos_yaw = math.cos(self.transform_yaw)
             sin_yaw = math.sin(self.transform_yaw)

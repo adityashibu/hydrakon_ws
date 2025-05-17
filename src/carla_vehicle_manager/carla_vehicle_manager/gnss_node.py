@@ -180,8 +180,16 @@ class CarlaGNSSNode(Node):
             msg.status.status = NavSatStatus.STATUS_FIX
             msg.status.service = NavSatStatus.SERVICE_GPS
             
-            msg.latitude = gnss_data['latitude']
-            msg.longitude = gnss_data['longitude']
+            # Apply artificial scaling and offset
+            scale_factor = 1000.0  # exaggerate motion
+            base_lat = 37.4275     # fake base (Stanford)
+            base_lon = -122.1697
+
+            scaled_lat = base_lat + (gnss_data['latitude'] * scale_factor)
+            scaled_lon = base_lon + (gnss_data['longitude'] * scale_factor)
+
+            msg.latitude = scaled_lat
+            msg.longitude = scaled_lon
             msg.altitude = gnss_data['altitude']
             
             position_covariance = [

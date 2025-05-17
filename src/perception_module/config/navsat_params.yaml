@@ -1,13 +1,13 @@
-/**:
+navsat_transform_node:
   ros__parameters:
-    frequency: 10.0  # Hz
+    frequency: 10.0
     magnetic_declination_radians: 0.0
-    yaw_offset: 1.5707963  # PI/2 (IMU 0 = north)
+    yaw_offset: 1.5707963
     zero_altitude: true
     publish_filtered_gps: true
     broadcast_utm_transform: true
     use_odometry_yaw: false
-    wait_for_datum: false  # Use first GPS fix automatically
-    datum_latitude: 0.0
-    datum_longitude: 0.0
+    wait_for_datum: false
+    datum_latitude: 37.4275
+    datum_longitude: -122.1697
     datum_yaw: 0.0

@@ -27,6 +27,7 @@ setup(
             'vehicle_node = carla_vehicle_manager.vehicle_node:main',
             'imu_node = carla_vehicle_manager.imu_node:main',
             'gnss_node = carla_vehicle_manager.gnss_node:main',
+            'keyboard_control_node = carla_vehicle_manager.keyboard_control_node:main',
         ],
     },
 )
