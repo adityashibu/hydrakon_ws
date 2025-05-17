@@ -12,12 +12,13 @@ import numpy as np
 import math
 import pyproj
 import threading
-from geometry_msgs.msg import TransformStamped, Quaternion, Vector3
+from geometry_msgs.msg import TransformStamped, Quaternion, PoseStamped
 from sensor_msgs.msg import NavSatFix, Imu
 from nav_msgs.msg import Odometry
 from tf2_ros import TransformBroadcaster
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
+
 
 
 class NavsatTransformNode(Node):
@@ -60,18 +61,14 @@ class NavsatTransformNode(Node):
         self.datum_yaw = self.get_parameter('datum_yaw').value
         
         if not self.wait_for_datum and (self.datum_latitude != 0.0 or self.datum_longitude != 0.0):
-            # Set the transform from the provided datum
             self.set_datum(self.datum_latitude, self.datum_longitude, self.datum_yaw)
         
-        # Latest data containers
         self.latest_imu_msg = None
         self.latest_gps_msg = None
         self.latest_odom_msg = None
         
-        # Transform broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
         
-        # TF listener
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         
@@ -98,6 +95,11 @@ class NavsatTransformNode(Node):
             Odometry,
             '/odometry/gps',
             10)
+        
+        self.pose_pub = self.create_publisher(
+            PoseStamped, 
+            '/gps/pose', 
+            10)
             
         if self.publish_filtered_gps:
             self.filtered_gps_pub = self.create_publisher(
@@ -105,7 +107,6 @@ class NavsatTransformNode(Node):
                 '/gps/filtered',
                 10)
         
-        # Main timer for publishing
         self.timer = self.create_timer(1.0/self.frequency, self.publish_gps_odom)
         
         self.get_logger().info("NavSat Transform Node initialized")
@@ -239,7 +240,6 @@ class NavsatTransformNode(Node):
                 h_acc = gps_msg.position_covariance[0]  # Horizontal accuracy
                 v_acc = gps_msg.position_covariance[8]  # Vertical accuracy
                 
-                # Use GPS horizontal accuracy for x/y and vertical accuracy for z
                 odom_msg.pose.covariance = [
                     h_acc, 0.0, 0.0, 0.0, 0.0, 0.0,
                     0.0, h_acc, 0.0, 0.0, 0.0, 0.0,
@@ -250,13 +250,18 @@ class NavsatTransformNode(Node):
                 ]
             self.gps_odom_pub.publish(odom_msg)
             
-            # Broadcast UTM transform if requested
             if self.broadcast_utm_transform:
                 self.broadcast_utm_to_map_transform(utm_x, utm_y, gps_msg.altitude)
             
-            # Publish filtered GPS if requested
             if self.publish_filtered_gps:
                 self.publish_filtered_gps_message(odom_msg)
+
+            pose_msg = PoseStamped()
+            pose_msg.header.stamp = odom_msg.header.stamp
+            pose_msg.header.frame_id = odom_msg.header.frame_id
+            pose_msg.pose = odom_msg.pose.pose
+
+            self.pose_pub.publish(pose_msg)
                 
         except Exception as e:
             self.get_logger().error(f"Error processing GPS data: {str(e)}")
