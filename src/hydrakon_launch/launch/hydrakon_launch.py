@@ -60,6 +60,19 @@ def generate_launch_description():
                 )
             ]
         ),
+
+        TimerAction(
+            period=3.0,
+            actions=[
+                Node(
+                    package='perception_module',
+                    executable='navsat_transform_node',
+                    name='navsat_transform_node',
+                    output='screen',
+                    parameters=['config/navsat_params.yaml']
+                )
+            ]
+        ),
         
         TimerAction(
             period=2.0,

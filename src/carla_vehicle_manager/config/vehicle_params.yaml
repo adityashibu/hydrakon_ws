@@ -1,2 +1,7 @@
-carla_host: "localhost"
-carla_port: 2000
+/**:
+  ros__parameters:
+    carla_host: "localhost"
+    carla_port: 2000
+    throttle_step: 0.1  # Step size for throttle increments/decrements
+    steering_step: 0.1  # Step size for steering increments/decrements
+    brake_step: 0.2     # Step size for brake increments

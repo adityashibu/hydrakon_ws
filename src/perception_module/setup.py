@@ -9,7 +9,7 @@ setup(
     data_files=[
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/perception_launch.py']),
-        ('share/' + package_name + '/config', ['config/perception_params.yaml']),
+        ('share/' + package_name + '/config', ['config/navsat_params.yaml']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'perception_node = perception_module.perception_node:main',
+            # 'perception_node = perception_module.perception_node:main',
+            'navsat_transform_node = perception_module.navsat_transform_node:main',
         ],
     },
 )
