@@ -21,40 +21,32 @@ class KeyboardControlNode(Node):
     def __init__(self):
         super().__init__('keyboard_control_node')
         
-        # Declare parameters
         self.declare_parameter("throttle_step", 0.1)
         self.declare_parameter("steering_step", 0.1)
         self.declare_parameter("brake_step", 0.2)
         
-        # Get parameters
         self.throttle_step = self.get_parameter("throttle_step").get_parameter_value().double_value
         self.steering_step = self.get_parameter("steering_step").get_parameter_value().double_value
         self.brake_step = self.get_parameter("brake_step").get_parameter_value().double_value
         
-        # Control values
         self.throttle = 0.0
         self.steer = 0.0
         self.brake = 0.0
         self.reverse = False
         self.handbrake = False
         
-        # Create publishers
         self.cmd_vel_pub = self.create_publisher(Twist, '/carla/vehicle/cmd_vel', 10)
         self.throttle_pub = self.create_publisher(Float32, '/carla/vehicle/throttle', 10)
         self.brake_pub = self.create_publisher(Float32, '/carla/vehicle/brake', 10)
         self.handbrake_pub = self.create_publisher(Bool, '/carla/vehicle/handbrake', 10)
         self.reverse_pub = self.create_publisher(Bool, '/carla/vehicle/reverse', 10)
         
-        # Set up keyboard input thread
         self.exit_event = threading.Event()
         self.keyboard_thread = threading.Thread(target=self.keyboard_control_loop)
         self.keyboard_thread.daemon = True
         self.keyboard_thread.start()
         
-        # Timer for publishing control commands
         self.timer = self.create_timer(0.05, self.publish_controls)  # 20Hz update rate
-        
-        # Print help message
         self.print_control_help()
     
     def print_control_help(self):
@@ -151,28 +143,23 @@ Current control values will be displayed in real-time.
     def publish_controls(self):
         """Publish the control commands as ROS topics."""
         try:
-            # Publish throttle
             throttle_msg = Float32()
             throttle_msg.data = float(self.throttle)
             self.throttle_pub.publish(throttle_msg)
             
-            # Publish brake
             brake_msg = Float32()
             brake_msg.data = float(self.brake)
             self.brake_pub.publish(brake_msg)
             
-            # Publish steering as cmd_vel
             cmd_vel = Twist()
             cmd_vel.linear.x = float(self.throttle - self.brake)
             cmd_vel.angular.z = float(self.steer)
             self.cmd_vel_pub.publish(cmd_vel)
             
-            # Publish handbrake
             handbrake_msg = Bool()
             handbrake_msg.data = self.handbrake
             self.handbrake_pub.publish(handbrake_msg)
             
-            # Publish reverse
             reverse_msg = Bool()
             reverse_msg.data = self.reverse
             self.reverse_pub.publish(reverse_msg)
