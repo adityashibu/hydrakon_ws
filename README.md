@@ -22,6 +22,7 @@
 
   - **hydrakon_launch/**
     - Unified [launch file](src/hydrakon_launch/launch/hydrakon_launch.py) that launches all core modules.
+      - **Has EKF Parameters directly baked into the launch file**
 
   - **lidar_cluster/**
     - Processes incoming LiDAR point clouds to detect and cluster potential cones using DBSCAN.
@@ -115,7 +116,7 @@
   ‣ Type: `nav_msgs/msg/Odometry`
 
 - **`/odometry/filtered`**  
-  (Placeholder) Will contain odometry output from `robot_localization` EKF  
+  Contains odometry output from `robot_localization` EKF  
   ‣ Type: `nav_msgs/msg/Odometry`
 
 ---
