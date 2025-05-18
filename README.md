@@ -4,7 +4,7 @@
 
 - **src:**
     - **carla_vehicle_manager:**
-        - Handles all the vehicle related components in Carla, including vehicle launch, vehicle control and the onboard IMU and GNSS sensors
+        - Package that handles all the vehicle related components in Carla, including vehicle launch, vehicle control and the onboard IMU and GNSS sensors
         - **Sensors:**
             - [IMU Node](src/carla_vehicle_manager/carla_vehicle_manager/imu_node.py)
             - [GNSS Node](src/carla_vehicle_manager/carla_vehicle_manager/gnss_node.py)
@@ -20,9 +20,15 @@
     - **lidar_cluster:**
         - Package to cluser all incoming lidar points to create clusters for potential cones. Uses ``DBScan``, and publishes the following ROS2 Topics:
         - **Topics:**
-           - [/carla/lidar](#ros2-topics)
            - [/perception/lidar_cluster](#ros2-topics)
            - [/perception/cone_markers](#ros2-topics)
+
+    - **lidar_handler:**
+        - Package to setup the base LiDAR that simulates the Robosense Helios 16 LiDAR and publishes the following ROS2 Topics:
+        - **Sensors:**
+            - [LiDAR Node](src/lidar_handler/lidar_handler/lidar_node.py)
+        - **Topics:**
+           - [/carla/lidar](#ros2-topics)
 
 # ROS2 Topics
 - **/carla/imu_sensor:** IMU Data directly from the onboard IMU sensor
