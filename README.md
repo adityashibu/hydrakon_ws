@@ -1,75 +1,129 @@
 # Folder Structure
-- **scripts:**
-    - This has all utility scripts to use with carla, such as ``carla_cleanup.py`` which is used to cleanup the carla simulator when launching ros2 topics
 
-- **src:**
-    - **carla_vehicle_manager:**
-        - Package that handles all the vehicle related components in Carla, including vehicle launch, vehicle control and the onboard IMU and GNSS sensors
-        - **Sensors:**
-            - [IMU Node](src/carla_vehicle_manager/carla_vehicle_manager/imu_node.py)
-            - [GNSS Node](src/carla_vehicle_manager/carla_vehicle_manager/gnss_node.py)
-        - The package also publishes the following ROS2 Topics:
-        - **Topics:**
-            - [/carla/imu_sensor](#ros2-topics)
-            - [/carla/gnss](#ros2-topics)
-            - [/carla/vehicle/*](#ros2-topics)
+- **scripts/**
+  - Utility scripts for working with CARLA.
+  - Example: [`carla_cleanup.py`](scripts/carla_cleanup.py) — cleans up the CARLA simulator before launching ROS 2 nodes.
 
-    - **hydrakon_launch:**
-        - Main workspace launcher, a unified [launch file](src/hydrakon_launch/launch/hydrakon_launch.py) under the launch folder handles and launches all nodes called from within that file
+- **src/**
+  - **carla_vehicle_manager/**
+    - Manages vehicle control and sensor interfaces in CARLA.
+    - **Sensors:**
+      - [IMU Node](src/carla_vehicle_manager/carla_vehicle_manager/imu_node.py)
+      - [GNSS Node](src/carla_vehicle_manager/carla_vehicle_manager/gnss_node.py)
+    - **Topics:**
+      - [`/carla/imu_sensor`](#ros2-topics)
+      - [`/carla/gnss`](#ros2-topics)
+      - [`/carla/vehicle/*`](#ros2-topics)
 
-    - **lidar_cluster:**
-        - Package to cluser all incoming lidar points to create clusters for potential cones. Uses ``DBScan``, and publishes the following ROS2 Topics:
-        - **Topics:**
-           - [/perception/lidar_cluster](#ros2-topics)
-           - [/perception/cone_markers](#ros2-topics)
+  - **hydrakon_launch/**
+    - Unified [launch file](src/hydrakon_launch/launch/hydrakon_launch.py) that launches all core modules.
 
-    - **lidar_handler:**
-        - Package to setup the base LiDAR that simulates the Robosense Helios 16 LiDAR and publishes the following ROS2 Topics:
-        - **Sensors:**
-            - [LiDAR Node](src/lidar_handler/lidar_handler/lidar_node.py)
-        - **Topics:**
-           - [/carla/lidar](#ros2-topics)
+  - **lidar_cluster/**
+    - Processes incoming LiDAR point clouds to detect and cluster potential cones using DBSCAN.
+    - **Topics:**
+      - [`/perception/lidar_cluster`](#ros2-topics)
+      - [`/perception/cone_markers`](#ros2-topics)
 
-    - **perception_module:**
-        - Package that handles all perception related topics such as **Navsat, odometry, SLAM etc.** and also has files for the ``navsat_transform_node`` which is used by the ``robot localization`` package and publishes the following ROS2 Topics:
-        - **Topics:**
-           - [/gps/filtered](#ros2-topics)
-           - [/gps/pose](#ros2-topics)
-           - [/odometry/gps](#ros2-topics)
-           - [/odometry/filtered](#ros2-topics)
+  - **lidar_handler/**
+    - Simulates the Robosense Helios 16 LiDAR using a Carla sensor wrapper.
+    - **Sensor Node:**
+      - [LiDAR Node](src/lidar_handler/lidar_handler/lidar_node.py)
+    - **Topics:**
+      - [`/carla/lidar`](#ros2-topics)
 
-    - **planning_module:**
-        - Package that will be implemented **later** to handle all the path planning algorithms such as Pure pursuit and MPC
+  - **perception_module/**
+    - Handles perception-related transformations, localization, and sensor fusion (e.g., navsat transform).
+    - **Topics:**
+      - [`/gps/filtered`](#ros2-topics)
+      - [`/gps/pose`](#ros2-topics)
+      - [`/odometry/gps`](#ros2-topics)
+      - [`/odometry/filtered`](#ros2-topics)
 
-    - **zed2i_camera_sim:**
-        - Package that handles all ZED2i camera simulation snippets for Carla and publishes the following ROS2 Topics:
-        - **Topics:**
-           - [/zed2i/camera_info](#ros2-topics)
-           - [/zed2i/depth/image](#ros2-topics)
-           - [/zed2i/rgb/image](#ros2-topics)
+  - **planning_module/**
+    - (To be implemented) Will handle path planning algorithms such as Pure Pursuit and MPC.
+
+  - **zed2i_camera_sim/**
+    - Simulates the ZED 2i stereo camera in Carla.
+    - **Topics:**
+      - [`/zed2i/camera_info`](#ros2-topics)
+      - [`/zed2i/depth/image`](#ros2-topics)
+      - [`/zed2i/rgb/image`](#ros2-topics)
+
+---
 
 # ROS2 Topics
-- **/carla/imu_sensor:** IMU Data directly from the onboard IMU sensor
-    - Type: IMU Data
-- **/carla/gnss:** GNSS Data directly from the onboard GNSS sensor
-    - Type: GNSS Data
-- **/carla/vehicle/*:** ROS2 topics for controlling the car, does not to be manually changed, instead called from by running the [keyboard_control_node.py](/src/carla_vehicle_manager/carla_vehicle_manager/keyboard_control_node.py)
-    - Type: Carla vehicle control data
-- **/carla/lidar:** Raw LiDAR data-points
-    - Type: PointCloud2
-- **/perception/lidar_cluster:** Filtered and clustered LiDAR data-points
-    - Type: PointCloud2
-- **/perception/cone_markers:** Visualize cone markers at the positions of the clustered data-points
-    - Type: MarkerArray
-- **/gps/filtered and /gps/pose:** Both give you clean GPS data, up to you on which one you want to use
-    - Type: Filtered and clean GPS Data
-- **/odometry/gps:** Raw GPS data measured by the ``navsat_transform_node``
-    - Type: GPS Data
-- **/odometry/filtered:** This topic will **later** be used to publish filtered odometry data after passing it through an EKF (Extended Kalman Filter)
-    - Type: Idk yet?
-- **/zed2i/camera_info:** Provides all the camera information from Carla, useful for debugging purposes
-    - Type: Camera simulation data
-- **/zed2i/depth/image:** Provides the depth map as seen by the camera simulation
-    - Type: Image
-- **/zed2i/depth/image:** Provides the full RGB feed as seen by the camera simulation
-    - Type: Image
+
+### 🛰 Sensors & Environment
+- **`/carla/imu_sensor`**  
+  IMU data from Carla’s onboard IMU  
+  ‣ Type: `sensor_msgs/msg/Imu`
+
+- **`/carla/gnss`**  
+  GNSS data from Carla’s onboard GPS sensor  
+  ‣ Type: `sensor_msgs/msg/NavSatFix`
+
+- **`/carla/lidar`**  
+  Raw LiDAR point cloud  
+  ‣ Type: `sensor_msgs/msg/PointCloud2`
+
+- **`/zed2i/camera_info`**  
+  Intrinsic camera parameters from the ZED2i simulation  
+  ‣ Type: `sensor_msgs/msg/CameraInfo`
+
+- **`/zed2i/depth/image`**  
+  Depth image from the ZED2i simulation  
+  ‣ Type: `sensor_msgs/msg/Image`
+
+- **`/zed2i/rgb/image`**  
+  RGB image from the ZED2i simulation  
+  ‣ Type: `sensor_msgs/msg/Image`
+
+---
+
+### 🚘 Vehicle Control
+- **`/carla/vehicle/*`**  
+  Set of vehicle control topics (e.g., throttle, brake, reverse)  
+  ‣ Type: Carla-specific control interfaces  
+  ‣ Driven via [`keyboard_control_node.py`](src/carla_vehicle_manager/carla_vehicle_manager/keyboard_control_node.py)
+
+---
+
+### 🧠 Perception & Localization
+- **`/perception/lidar_cluster`**  
+  Clustered cone candidates from LiDAR  
+  ‣ Type: `sensor_msgs/msg/PointCloud2`
+
+- **`/perception/cone_markers`**  
+  RViz markers representing clustered cones  
+  ‣ Type: `visualization_msgs/msg/MarkerArray`
+
+- **`/gps/filtered`**  
+  GPS data after initial fusion/filtering  
+  ‣ Type: `sensor_msgs/msg/NavSatFix`
+
+- **`/gps/pose`**  
+  GPS fused pose as `geometry_msgs/PoseStamped`  
+  ‣ Type: `geometry_msgs/msg/PoseStamped`
+
+- **`/odometry/gps`**  
+  Odometry based on raw GNSS + IMU  
+  ‣ Type: `nav_msgs/msg/Odometry`
+
+- **`/odometry/filtered`**  
+  (Placeholder) Will contain odometry output from `robot_localization` EKF  
+  ‣ Type: `nav_msgs/msg/Odometry`
+
+---
+
+### 🧭 Transforms & Logs
+- **`/tf`**  
+  Dynamic transform tree (e.g., map → base_link)  
+  ‣ Type: `tf2_msgs/msg/TFMessage`
+
+- **`/tf_static`**  
+  Static transforms (e.g., base_link → imu_link)  
+  ‣ Type: `tf2_msgs/msg/TFMessage`
+
+- **`/rosout`**  
+  Internal ROS 2 logging messages (for `rqt_console`, `ros2 log`)  
+  ‣ Type: `rcl_interfaces/msg/Log`
