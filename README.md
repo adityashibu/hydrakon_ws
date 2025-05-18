@@ -38,6 +38,16 @@
            - [/odometry/gps](#ros2-topics)
            - [/odometry/filtered](#ros2-topics)
 
+    - **planning_module:**
+        - Package that will be implemented **later** to handle all the path planning algorithms such as Pure pursuit and MPC
+
+    - **zed2i_camera_sim:**
+        - Package that handles all ZED2i camera simulation snippets for Carla and publishes the following ROS2 Topics:
+        - **Topics:**
+           - [/zed2i/camera_info](#ros2-topics)
+           - [/zed2i/depth/image](#ros2-topics)
+           - [/zed2i/rgb/image](#ros2-topics)
+
 # ROS2 Topics
 - **/carla/imu_sensor:** IMU Data directly from the onboard IMU sensor
     - Type: IMU Data
@@ -57,3 +67,9 @@
     - Type: GPS Data
 - **/odometry/filtered:** This topic will **later** be used to publish filtered odometry data after passing it through an EKF (Extended Kalman Filter)
     - Type: Idk yet?
+- **/zed2i/camera_info:** Provides all the camera information from Carla, useful for debugging purposes
+    - Type: Camera simulation data
+- **/zed2i/depth/image:** Provides the depth map as seen by the camera simulation
+    - Type: Image
+- **/zed2i/depth/image:** Provides the full RGB feed as seen by the camera simulation
+    - Type: Image
