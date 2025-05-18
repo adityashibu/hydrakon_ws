@@ -28,6 +28,14 @@ def generate_launch_description():
         ),
 
         Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='map_to_odom_tf',
+            arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
+            output='screen'
+        ),
+
+        Node(
             package='carla_vehicle_manager',
             executable='vehicle_node',
             name='carla_vehicle_manager',
@@ -70,6 +78,55 @@ def generate_launch_description():
                     name='navsat_transform_node',
                     output='screen',
                     parameters=['/home/aditya/hydrakon_ws/src/perception_module/config/navsat_params.yaml']
+                )
+            ]
+        ),
+
+        TimerAction(
+            period=4.0,
+            actions=[
+                Node(
+                    package='robot_localization',
+                    executable='ekf_node',
+                    name='ekf_filter_node',
+                    output='screen',
+                    parameters=[{
+                        'frequency': 30.0,
+                        'sensor_timeout': 5.0,
+                        'two_d_mode': True,
+                        'publish_tf': True,
+                        'publish_acceleration': True,
+                        'print_diagnostics': True,
+                        'debug': True,
+                        
+                        'map_frame': 'map',
+                        'odom_frame': 'odom',
+                        'base_link_frame': 'base_link',
+                        'world_frame': 'map',
+                        
+                        'imu0': '/carla/imu_sensor',
+                        'imu0_config': [False, False, False,
+                                       True, True, True,
+                                       False, False, False,
+                                       True, True, True,
+                                       True, True, True],
+                        'imu0_nodelay': True,
+                        'imu0_differential': False,
+                        'imu0_relative': True,
+                        'imu0_queue_size': 10,
+                        'imu0_remove_gravitational_acceleration': True,
+                        
+                        'odom0': '/odometry/gps',
+                        'odom0_config': [True, True, False,
+                                        False, False, True,
+                                        True, True, False,
+                                        False, False, False,
+                                        False, False, False],
+                        'odom0_nodelay': True,
+                        'odom0_differential': False,
+                        'odom0_relative': True,
+                        'odom0_queue_size': 10,
+                    }]
                 )
             ]
         ),

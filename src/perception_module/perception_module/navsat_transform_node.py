@@ -272,23 +272,22 @@ class NavsatTransformNode(Node):
         """
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = self.world_frame_id
-        t.child_frame_id = self.utm_frame_id
+        t.header.frame_id = self.utm_frame_id
+        t.child_frame_id = self.world_frame_id
         
-        t.transform.translation.x = -self.utm_origin_x
-        t.transform.translation.y = -self.utm_origin_y
+        t.transform.translation.x = self.utm_origin_x
+        t.transform.translation.y = self.utm_origin_y
         
         if self.zero_altitude:
             t.transform.translation.z = 0.0
         else:
-            t.transform.translation.z = -altitude
+            t.transform.translation.z = altitude
         
-        inverse_yaw = -self.transform_yaw
         q = Quaternion()
         q.x = 0.0
         q.y = 0.0
-        q.z = math.sin(inverse_yaw / 2.0)
-        q.w = math.cos(inverse_yaw / 2.0)
+        q.z = math.sin(self.transform_yaw / 2.0)
+        q.w = math.cos(self.transform_yaw / 2.0)
         t.transform.rotation = q
         
         self.tf_broadcaster.sendTransform(t)
