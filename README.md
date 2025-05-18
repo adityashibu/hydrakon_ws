@@ -1,3 +1,8 @@
+# Table of Contents
+- [Folder Structure](#folder-structure)
+- [ROS Topics](#ros2-topics)
+- [Getting Started](#getting-started)
+
 # Folder Structure
 
 - **scripts/**
@@ -127,3 +132,49 @@
 - **`/rosout`**  
   Internal ROS 2 logging messages (for `rqt_console`, `ros2 log`)  
   ‣ Type: `rcl_interfaces/msg/Log`
+
+# Getting Started
+1. **✅ Prerequisites**
+    - Ensure the following are installed:
+        - Ubuntu 22.04 (Preferred) or later
+        - ROS2 Humble
+        - CARLA Simulator
+        - Python 3.10 
+        - ``colcon``, ``rosdep``, and other ROS dev tools
+        - NVIDIA GPU with drivers for Carla rendering
+2. **📁 Clone the Workspace**
+    ```shell
+    cd ~
+    git clone https://github.com/<your-username>/hydrakon_ws.git
+    cd hydrakon_ws
+    ```
+3. **📦 Build the Workspace**
+    ```shell
+    source /opt/ros/humble/setup.bash
+    rosdep install --from-paths src --ignore-src -r -y
+    colcon build --symlink-install
+    ```
+4. **🔧 Source the Setup**
+    ```shell
+    source install/setup.bash
+    ```
+5. **🧪 Run Carla Simulator**
+    ```shell
+    cd ~/<location-to-your-Carla-sim>
+    cd Linux
+    ./CarlaUnreal.sh 
+    ```
+
+    Use the `-quality-level=Low` flag if needed
+    ```shell
+    ./CarlaUnreal.sh -quality-level=Low
+    ```
+6. **🚗 Launch the Full System**
+    ```shell
+    ros2 launch hydrakon_launch hydrakon_launch.py
+    ```
+7. **📊 Visualize in RViz**
+    ```
+    rviz2
+    ```
+    Open this in a new terminal, and make sure `base_link` is selected as the correct fixed frame, then go ahead and choose your desired topics to visualize
