@@ -30,6 +30,14 @@
         - **Topics:**
            - [/carla/lidar](#ros2-topics)
 
+    - **perception_module:**
+        - Package that handles all perception related topics such as **Navsat, odometry, SLAM etc.** and also has files for the ``navsat_transform_node`` which is used by the ``robot localization`` package and publishes the following ROS2 Topics:
+        - **Topics:**
+           - [/gps/filtered](#ros2-topics)
+           - [/gps/pose](#ros2-topics)
+           - [/odometry/gps](#ros2-topics)
+           - [/odometry/filtered](#ros2-topics)
+
 # ROS2 Topics
 - **/carla/imu_sensor:** IMU Data directly from the onboard IMU sensor
     - Type: IMU Data
@@ -43,3 +51,9 @@
     - Type: PointCloud2
 - **/perception/cone_markers:** Visualize cone markers at the positions of the clustered data-points
     - Type: MarkerArray
+- **/gps/filtered and /gps/pose:** Both give you clean GPS data, up to you on which one you want to use
+    - Type: Filtered and clean GPS Data
+- **/odometry/gps:** Raw GPS data measured by the ``navsat_transform_node``
+    - Type: GPS Data
+- **/odometry/filtered:** This topic will **later** be used to publish filtered odometry data after passing it through an EKF (Extended Kalman Filter)
+    - Type: Idk yet?
