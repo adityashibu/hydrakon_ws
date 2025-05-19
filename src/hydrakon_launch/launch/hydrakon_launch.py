@@ -28,6 +28,14 @@ def generate_launch_description():
         ),
 
         Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='map_to_base_link_tf',
+        arguments=['0', '0', '0', '0', '0', '0', 'map', 'base_link'],
+        output='screen'
+        ),
+
+        Node(
             package='tf2_ros',
             executable='static_transform_publisher',
             name='map_to_odom_tf',
@@ -102,7 +110,7 @@ def generate_launch_description():
                         'map_frame': 'map',
                         'odom_frame': 'odom',
                         'base_link_frame': 'base_link',
-                        'world_frame': 'map',
+                        'world_frame': 'odom',
                         
                         'imu0': '/carla/imu_sensor',
                         'imu0_config': [False, False, False,

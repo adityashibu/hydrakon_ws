@@ -9,7 +9,7 @@ setup(
     data_files=[
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/perception_launch.py']),
-        ('share/' + package_name + '/config', ['config/navsat_params.yaml', 'config/ekf_params.yaml']),
+        ('share/' + package_name + '/config', ['config/navsat_params.yaml']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
