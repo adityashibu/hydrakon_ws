@@ -36,26 +36,39 @@ def generate_launch_description():
             '-configuration_basename', 'cartographer.lua'
         ],
         remappings=[
-            ('points2', '/perception/lidar_cluster'),
+            ('points2', '/carla/lidar'),
             ('imu', '/carla/imu_sensor'),
             ('odom', '/odometry/filtered')
         ]
     )
     
-    # Occupancy grid node
     occupancy_grid_node = Node(
-        package='cartographer_ros',
-        executable='cartographer_occupancy_grid_node',
-        name='occupancy_grid_node',
-        output='screen',
-        parameters=[{
-            'use_sim_time': use_sim_time,
-            'resolution': 0.05,
-        }]
+    package='cartographer_ros',
+    executable='cartographer_occupancy_grid_node',
+    name='cartographer_occupancy_grid_node',
+    output='screen',
+    parameters=[{
+        'use_sim_time': use_sim_time,
+        'resolution': 0.05,
+        'publish_period_sec': 0.5,  # Faster publishing
+        'include_frozen_submaps': True,
+        'include_unfrozen_submaps': True,
+        'track_unknown_space': False
+    }]
+    )
+    # Add RViz to your launch file
+    
+    rviz_node = Node(
+    package='rviz2',
+    executable='rviz2',
+    name='rviz2',
+    arguments=['-d', os.path.join(config_dir, 'cartographer.rviz')],
+    output='screen'
     )
     
     return LaunchDescription([
         declare_use_sim_time,
         cartographer_node,
-        occupancy_grid_node
+        occupancy_grid_node,
+        rviz_node
     ])
