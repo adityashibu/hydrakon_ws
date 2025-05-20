@@ -1,3 +1,18 @@
-# Configuration for <package_name>
-param1: 1
-param2: 2
+perception_node:
+  param1: value1
+  param2: value2
+  # Add your existing parameters here
+
+# Fusion node parameters
+fusion_timer_node:
+  fusion_rate: 20.0
+  gnss_weight: 0.3
+  imu_weight: 0.7
+  cone_cluster_distance: 0.5
+  min_points_per_cone: 2
+  ground_threshold: -0.1
+  max_height: 1.0
+  use_ekf: true
+  debug_mode: true
+  use_height_filtering: false
+  distance_threshold: 50.0
