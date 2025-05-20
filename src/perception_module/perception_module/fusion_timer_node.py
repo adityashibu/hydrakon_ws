@@ -2,7 +2,7 @@
 """
 Sensor Fusion Node for Formula Student Driverless
 This module handles sensor fusion between LiDAR, IMU, and GNSS data in the CARLA simulator.
-No filtering approach to ensure cone detection works.
+Optimized filtering for CARLA's specific coordinate system.
 """
 
 import rclpy
@@ -23,7 +23,7 @@ from scipy.spatial.transform import Rotation as R
 from sensor_msgs.msg import Imu, NavSatFix, PointCloud2
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped, TwistStamped, TransformStamped, Point
-from std_msgs.msg import Header
+from std_msgs.msg import Header, ColorRGBA
 import sensor_msgs_py.point_cloud2 as pc2
 from visualization_msgs.msg import MarkerArray, Marker
 
@@ -57,24 +57,48 @@ class FusionTimerNode(Node):
         super().__init__('fusion_timer_node')
         
         # Declare parameters
-        self.declare_parameter('fusion_rate', 5.0)           # Hz
+        self.declare_parameter('fusion_rate', 5.0)            # Hz
+        self.declare_parameter('cone_detection_rate', 10.0)   # Hz for more real-time detection
         self.declare_parameter('gnss_weight', 0.3)            # Weight for GNSS in the fusion
         self.declare_parameter('imu_weight', 0.7)             # Weight for IMU in the fusion
-        self.declare_parameter('cone_cluster_distance', 1.0)  # Max distance between points (increased)
-        self.declare_parameter('min_points_per_cone', 1)      # Minimum points (reduced to 1)
+        self.declare_parameter('cone_cluster_distance', 1.0)  # Max distance between points
+        self.declare_parameter('min_points_per_cone', 1)      # Minimum points per cone
         self.declare_parameter('use_ekf', True)               # Whether to use EKF for fusion
         self.declare_parameter('debug_mode', True)            # Enable more detailed logging
-        self.declare_parameter('disable_filtering', True)     # Completely disable filtering
+        self.declare_parameter('filter_method', 'height_range')  # Filtering method: 'none', 'ground_plane', 'height_range'
+        self.declare_parameter('max_cone_distance', 40.0)     # Maximum distance to show cones (meters)
+        self.declare_parameter('show_cone_labels', True)      # Whether to show text labels on cones
+        self.declare_parameter('cone_color_by_height', True)  # Color cones by height
+        
+        # Height range filtering parameters (adjusted for CARLA's negative Z values)
+        self.declare_parameter('min_height', -3.0)  # Minimum height for cone detection (meters)
+        self.declare_parameter('max_height', -1.0)  # Maximum height for cone detection (meters)
+        
+        # Ground plane filtering parameters
+        self.declare_parameter('ground_z', -2.5)        # Approximate ground plane Z coordinate
+        self.declare_parameter('ground_thickness', 0.3) # Thickness of ground plane to filter
         
         # Get parameters
         self.fusion_rate = self.get_parameter('fusion_rate').value
+        self.cone_detection_rate = self.get_parameter('cone_detection_rate').value
         self.gnss_weight = self.get_parameter('gnss_weight').value
         self.imu_weight = self.get_parameter('imu_weight').value
         self.cone_cluster_distance = self.get_parameter('cone_cluster_distance').value
         self.min_points_per_cone = self.get_parameter('min_points_per_cone').value
         self.use_ekf = self.get_parameter('use_ekf').value
         self.debug_mode = self.get_parameter('debug_mode').value
-        self.disable_filtering = self.get_parameter('disable_filtering').value
+        self.filter_method = self.get_parameter('filter_method').value
+        self.max_cone_distance = self.get_parameter('max_cone_distance').value
+        self.show_cone_labels = self.get_parameter('show_cone_labels').value
+        self.cone_color_by_height = self.get_parameter('cone_color_by_height').value
+        
+        # Height filtering params
+        self.min_height = self.get_parameter('min_height').value
+        self.max_height = self.get_parameter('max_height').value
+        
+        # Ground plane params
+        self.ground_z = self.get_parameter('ground_z').value
+        self.ground_thickness = self.get_parameter('ground_thickness').value
         
         # Create callback groups to prevent deadlocks
         self.timer_callback_group = MutuallyExclusiveCallbackGroup()
@@ -155,6 +179,13 @@ class FusionTimerNode(Node):
             10
         )
         
+        # Filtered point cloud for debugging
+        self.filtered_cloud_pub = self.create_publisher(
+            PointCloud2,
+            '/fusion/filtered_cloud',
+            10
+        )
+        
         # TF buffer and listener
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -164,6 +195,15 @@ class FusionTimerNode(Node):
         self.last_lidar_process_time = self.get_clock().now()
         self.detected_cones = []  # List of tuples (cone_position, point_count)
         self.lidar_debug_count = 0  # Counter for debugging
+        self.marker_id_counter = 0  # Counter for marker IDs
+        self.active_marker_ids = set()  # Track active marker IDs
+        
+        # Z-value statistics for adaptive filtering
+        self.z_min = None
+        self.z_max = None
+        self.z_mean = None
+        self.z_std = None
+        self.z_stats_initialized = False
         
         # Set up fusion timer
         self.fusion_timer = self.create_timer(
@@ -172,9 +212,9 @@ class FusionTimerNode(Node):
             callback_group=self.timer_callback_group
         )
         
-        # Set up cone detection timer (runs at 5Hz to save computational resources)
+        # Set up cone detection timer (runs at higher rate for more responsive visualization)
         self.cone_timer = self.create_timer(
-            0.2,  # 5Hz 
+            1.0 / self.cone_detection_rate,  # Higher rate for real-time visualization
             self.cone_detection_callback,
             callback_group=self.timer_callback_group
         )
@@ -185,10 +225,13 @@ class FusionTimerNode(Node):
             self.ekf_covariance = np.eye(6) * 0.1
         
         self.get_logger().info(f"Fusion timer node initialized at {self.fusion_rate}Hz")
-        self.get_logger().info(f"Debug mode: {'Enabled' if self.debug_mode else 'Disabled'}")
-        self.get_logger().info(f"Filtering: {'DISABLED' if self.disable_filtering else 'Enabled'}")
+        self.get_logger().info(f"Cone detection rate: {self.cone_detection_rate}Hz")
+        self.get_logger().info(f"Filter method: {self.filter_method}")
+        self.get_logger().info(f"Height range: {self.min_height}m to {self.max_height}m")
+        self.get_logger().info(f"Ground plane: z={self.ground_z}m, thickness={self.ground_thickness}m")
         self.get_logger().info(f"Cone cluster distance: {self.cone_cluster_distance}m")
         self.get_logger().info(f"Min points per cone: {self.min_points_per_cone}")
+        self.get_logger().info(f"Max cone distance: {self.max_cone_distance}m")
         
     def imu_callback(self, msg: Imu):
         """Callback for IMU sensor data."""
@@ -438,8 +481,10 @@ class FusionTimerNode(Node):
         self.fused_velocity_pub.publish(twist_msg)
             
     def cone_detection_callback(self):
-        """Process LiDAR data to detect cones. No filtering approach."""
+        """Process LiDAR data to detect cones with improved filtering."""
         with self.sensor_data.lock:
+            self.detected_cones = []
+
             if self.sensor_data.lidar_data is None:
                 return
                 
@@ -480,9 +525,29 @@ class FusionTimerNode(Node):
                 # Publish raw point cloud for visualization
                 self.publish_raw_cloud(points_array)
                 
+                # Calculate Z statistics for adaptive filtering if not initialized
+                if not self.z_stats_initialized and len(points_array) > 10:
+                    self.z_min = np.min(points_array[:, 2])
+                    self.z_max = np.max(points_array[:, 2])
+                    self.z_mean = np.mean(points_array[:, 2])
+                    self.z_std = np.std(points_array[:, 2])
+                    self.z_stats_initialized = True
+                    
+                    # Update filtering parameters if using adaptive filtering
+                    if self.filter_method == 'adaptive':
+                        # Set ground plane level at the mean Z minus some margin
+                        self.ground_z = self.z_mean - 0.3 * self.z_std
+                        # Set height range to be mean +/- 2 standard deviations
+                        self.min_height = self.z_mean - 2.0 * self.z_std
+                        self.max_height = self.z_mean + 2.0 * self.z_std
+                        
+                        self.get_logger().info(f"Adaptive filtering parameters updated:")
+                        self.get_logger().info(f"  Z stats: min={self.z_min:.2f}, max={self.z_max:.2f}, mean={self.z_mean:.2f}, std={self.z_std:.2f}")
+                        self.get_logger().info(f"  Ground plane: z={self.ground_z:.2f}")
+                        self.get_logger().info(f"  Height range: min={self.min_height:.2f}, max={self.max_height:.2f}")
+                
                 if self.debug_mode:
                     self.get_logger().info(f"Points array shape: {points_array.shape}")
-                    self.get_logger().info(f"Points array dtype: {points_array.dtype}")
                     
                     # Print range of z values for debugging
                     if len(points_array) > 0:
@@ -490,26 +555,50 @@ class FusionTimerNode(Node):
                         z_max = np.max(points_array[:, 2])
                         self.get_logger().info(f"Z-range: min={z_min:.2f}m, max={z_max:.2f}m")
                 
-                # If filtering is completely disabled, use all points
-                if self.disable_filtering:
-                    # Skip all filtering
-                    filtered_points = points_array
+                # Initial distance filtering (only keep points within max_cone_distance)
+                distances = np.sqrt(np.sum(points_array[:, :2]**2, axis=1))  # XY distance
+                distance_mask = distances < self.max_cone_distance  # Only use points within range
+                filtered_by_distance = points_array[distance_mask]
+                
+                if self.debug_mode:
+                    self.get_logger().info(f"After distance filtering ({self.max_cone_distance}m): {len(filtered_by_distance)} of {len(points_array)} points")
+                
+                # Apply filtering based on the selected method
+                if self.filter_method == 'none':
+                    # No additional filtering
+                    filtered_points = filtered_by_distance
                     if self.debug_mode:
-                        self.get_logger().info(f"Using ALL {len(filtered_points)} points (filtering disabled)")
-                else:
-                    # Apply filtering (not used by default now but kept for future use)
-                    # Distance filtering
-                    distances = np.sqrt(np.sum(points_array[:, :2]**2, axis=1))  # XY distance
-                    distance_mask = distances < 50.0  # 50 meter max range
-                    filtered_points = points_array[distance_mask]
+                        self.get_logger().info(f"No additional filtering applied")
+                
+                elif self.filter_method == 'height_range':
+                    # Filter by height range (specific to CARLA's coordinate system)
+                    height_mask = (filtered_by_distance[:, 2] >= self.min_height) & (filtered_by_distance[:, 2] <= self.max_height)
+                    filtered_points = filtered_by_distance[height_mask]
                     
                     if self.debug_mode:
-                        self.get_logger().info(f"After filtering: {len(filtered_points)} points remain")
+                        self.get_logger().info(f"After height range filtering ({self.min_height}m to {self.max_height}m): {len(filtered_points)} points")
+                
+                elif self.filter_method == 'ground_plane':
+                    # Filter out ground plane points
+                    # Keep points that are NOT near the ground_z value
+                    non_ground_mask = np.abs(filtered_by_distance[:, 2] - self.ground_z) > self.ground_thickness
+                    filtered_points = filtered_by_distance[non_ground_mask]
+                    
+                    if self.debug_mode:
+                        self.get_logger().info(f"After ground plane filtering (z={self.ground_z}±{self.ground_thickness}m): {len(filtered_points)} points")
+                
+                else:  # Default to no filtering
+                    filtered_points = filtered_by_distance
+                
+                # Publish filtered cloud for visualization
+                self.publish_filtered_cloud(filtered_points)
                 
                 # Skip processing if we don't have enough points after filtering
                 if len(filtered_points) < self.min_points_per_cone:
                     if self.debug_mode:
                         self.get_logger().info("Not enough points for cone detection")
+                    # Clear existing markers if we don't have any cones
+                    self.clear_all_markers()
                     return
                 
                 # Simplified DBSCAN-like clustering for cones
@@ -562,6 +651,40 @@ class FusionTimerNode(Node):
         # Create PointCloud2 message
         pc_msg = pc2.create_cloud(header, fields, cloud_points)
         self.raw_cloud_pub.publish(pc_msg)
+    
+    def publish_filtered_cloud(self, points_array: np.ndarray):
+        """Publish filtered point cloud for visualization."""
+        if len(points_array) == 0:
+            return
+            
+        # Create point cloud message
+        header = Header()
+        header.stamp = self.get_clock().now().to_msg()
+        header.frame_id = "map"  # Adjust frame if needed
+        
+        # Create fields for PointCloud2
+        fields = [
+            pc2.PointField(name='x', offset=0, datatype=pc2.PointField.FLOAT32, count=1),
+            pc2.PointField(name='y', offset=4, datatype=pc2.PointField.FLOAT32, count=1),
+            pc2.PointField(name='z', offset=8, datatype=pc2.PointField.FLOAT32, count=1),
+        ]
+        
+        # Create structured array for points
+        cloud_points = np.zeros(len(points_array), 
+                              dtype=[
+                                  ('x', np.float32),
+                                  ('y', np.float32),
+                                  ('z', np.float32)
+                              ])
+        
+        # Fill structured array
+        cloud_points['x'] = points_array[:, 0]
+        cloud_points['y'] = points_array[:, 1]
+        cloud_points['z'] = points_array[:, 2]
+        
+        # Create PointCloud2 message
+        pc_msg = pc2.create_cloud(header, fields, cloud_points)
+        self.filtered_cloud_pub.publish(pc_msg)
                 
     def simple_cluster_points(self, points: np.ndarray) -> List[Tuple[np.ndarray, int]]:
         """
@@ -631,25 +754,77 @@ class FusionTimerNode(Node):
             if len(current_cluster) >= self.min_points_per_cone:
                 # Calculate the centroid of the cluster
                 centroid = np.mean(current_cluster, axis=0)
-                # Store centroid and point count
-                clusters.append((centroid, len(current_cluster)))
+                
+                # Only include cones within the maximum distance
+                distance_to_origin = np.linalg.norm(centroid[:2])
+                if distance_to_origin <= self.max_cone_distance:
+                    # Store centroid and point count
+                    clusters.append((centroid, len(current_cluster)))
                 
                 if self.debug_mode and len(clusters) == 1:
                     self.get_logger().info(f"First cone cluster centroid: {centroid}")
                     self.get_logger().info(f"First cone cluster has {len(current_cluster)} points")
         
         return clusters
+    
+    def clear_all_markers(self):
+        """Clear all existing markers."""
+        if not self.active_marker_ids:
+            return
+            
+        marker_array = MarkerArray()
+        
+        # Create a deletion marker for each active marker ID
+        for marker_id in self.active_marker_ids:
+            # Delete cylinder marker
+            marker = Marker()
+            marker.header.frame_id = "map"
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns = "cone_markers"
+            marker.id = marker_id
+            marker.action = Marker.DELETE
+            
+            marker_array.markers.append(marker)
+            
+            # Delete text marker
+            text_marker = Marker()
+            text_marker.header = marker.header
+            text_marker.ns = "cone_labels"
+            text_marker.id = marker_id
+            text_marker.action = Marker.DELETE
+            
+            marker_array.markers.append(text_marker)
+        
+        # Publish the deletion markers
+        self.cone_markers_pub.publish(marker_array)
+        
+        # Clear the active marker IDs
+        self.active_marker_ids.clear()
         
     def publish_cone_markers(self):
         """Publish visualization markers for detected cones."""
+        self.clear_all_markers()
+
         marker_array = MarkerArray()
         
+        # Track new marker IDs
+        new_marker_ids = set()
+        
         for i, (cone_pos, point_count) in enumerate(self.detected_cones):
+            # Use continuously increasing IDs
+            marker_id = i
+            new_marker_ids.add(marker_id)
+            
+            # Calculate distance for coloring and size
+            distance = np.linalg.norm(cone_pos[:2])
+            distance_factor = float(max(0.0, 1.0 - (distance / self.max_cone_distance)))
+            
+            # Cylinder marker for cone
             marker = Marker()
             marker.header.frame_id = "map"  # Adjust if needed
             marker.header.stamp = self.get_clock().now().to_msg()
             marker.ns = "cone_markers"
-            marker.id = i
+            marker.id = marker_id
             marker.type = Marker.CYLINDER
             marker.action = Marker.ADD
             
@@ -659,47 +834,65 @@ class FusionTimerNode(Node):
             
             marker.pose.orientation.w = 1.0
             
-            # Size based on point count (bigger for more points)
-            scale_factor = min(1.0, 0.1 + (point_count / 10.0))
-            marker.scale.x = 0.3 * scale_factor  # Base diameter
-            marker.scale.y = 0.3 * scale_factor  # Base diameter
-            marker.scale.z = 0.5 * scale_factor  # Height
+            # Size based on point count and distance (bigger for closer cones)
+            point_scale = float(min(1.0, 0.1 + (point_count / 10.0)))
+            marker.scale.x = float(0.3 * point_scale * (0.5 + 0.5 * distance_factor))  # Base diameter
+            marker.scale.y = float(0.3 * point_scale * (0.5 + 0.5 * distance_factor))  # Base diameter
+            marker.scale.z = float(0.5 * point_scale * (0.5 + 0.5 * distance_factor))  # Height
             
-            # Color based on height (red for low, blue for high)
-            height_normalized = max(0.0, min(1.0, (cone_pos[2] + 0.5) / 2.0))
-            marker.color.r = 1.0 - height_normalized
-            marker.color.g = 0.5
-            marker.color.b = height_normalized
-            marker.color.a = 0.8
+            # Color based on different schemes
+            if self.cone_color_by_height:
+                # Color by relative height 
+                # Normalize based on the observed z range
+                if self.z_stats_initialized:
+                    height_normalized = float((cone_pos[2] - self.z_min) / (self.z_max - self.z_min)) if self.z_max > self.z_min else 0.5
+                else:
+                    # Default normalization if stats not available
+                    height_normalized = float(max(0.0, min(1.0, (cone_pos[2] - self.min_height) / (self.max_height - self.min_height))))
+                
+                marker.color.r = float(1.0 - height_normalized)
+                marker.color.g = 0.5
+                marker.color.b = float(height_normalized)
+            else:
+                # Color by distance (red for close, green for far)
+                marker.color.r = float(distance_factor)
+                marker.color.g = float(1.0 - distance_factor)
+                marker.color.b = 0.0
             
-            # Add text marker with point count
-            text_marker = Marker()
-            text_marker.header = marker.header
-            text_marker.ns = "cone_labels"
-            text_marker.id = i
-            text_marker.type = Marker.TEXT_VIEW_FACING
-            text_marker.action = Marker.ADD
-            
-            text_marker.pose.position.x = float(cone_pos[0])
-            text_marker.pose.position.y = float(cone_pos[1])
-            text_marker.pose.position.z = float(cone_pos[2]) + 0.5  # Above the cone
-            
-            text_marker.text = f"{point_count}pts (z:{cone_pos[2]:.2f})"
-            
-            text_marker.scale.z = 0.2  # Text height
-            
-            text_marker.color.r = 1.0
-            text_marker.color.g = 1.0
-            text_marker.color.b = 1.0
-            text_marker.color.a = 1.0
+            # Alpha depends on distance (more transparent as distance increases)
+            marker.color.a = float(0.8 * distance_factor + 0.2)  # Never completely transparent
             
             marker_array.markers.append(marker)
-            marker_array.markers.append(text_marker)
+            
+            # Add text marker with point count and distance if enabled
+            if self.show_cone_labels:
+                text_marker = Marker()
+                text_marker.header = marker.header
+                text_marker.ns = "cone_labels"
+                text_marker.id = marker_id
+                text_marker.type = Marker.TEXT_VIEW_FACING
+                text_marker.action = Marker.ADD
+                
+                text_marker.pose.position.x = float(cone_pos[0])
+                text_marker.pose.position.y = float(cone_pos[1])
+                text_marker.pose.position.z = float(cone_pos[2]) + 0.5  # Above the cone
+                
+                text_marker.text = f"{point_count}pts {distance:.1f}m z:{cone_pos[2]:.1f}"
+                
+                # Size depends on distance (smaller for further cones)
+                text_marker.scale.z = float(0.2 * (0.5 + 0.5 * distance_factor))  # Text height
+                
+                text_marker.color.r = 1.0
+                text_marker.color.g = 1.0
+                text_marker.color.b = 1.0
+                text_marker.color.a = float(distance_factor)  # More transparent with distance
+                
+                marker_array.markers.append(text_marker)
         
-        # Add deletion markers if needed
-        current_marker_count = len(self.detected_cones) * 2  # Each cone has a cylinder and text
-        last_marker_id = len(marker_array.markers)
+        # Keep track of active markers
+        self.active_marker_ids = new_marker_ids
         
+        # Publish the marker array
         self.cone_markers_pub.publish(marker_array)
         
     def publish_cone_positions(self):
