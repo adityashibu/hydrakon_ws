@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             # 'perception_node = perception_module.perception_node:main',
             'navsat_transform_node = perception_module.navsat_transform_node:main',
+            'fusion_timer_node = perception_module.fusion_timer_node:main',
         ],
     },
 )
