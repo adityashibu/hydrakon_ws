@@ -157,14 +157,14 @@ def generate_launch_description():
         ),
 
         TimerAction(
-            period=5.0,  # Delay ensures sensors are ready
+            period=5.0,
             actions=[
                 Node(
                     package='perception_module',
                     executable='fusion_timer_node',
                     name='fusion_timer_node',
                     output='screen',
-                    parameters=[]  # Optional: You can pass fusion settings here
+                    parameters=[]
                 )
             ]
         ),
