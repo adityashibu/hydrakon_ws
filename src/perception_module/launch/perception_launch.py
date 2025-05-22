@@ -11,9 +11,9 @@ def generate_launch_description():
     
     # Print confirmation
     lua_file = os.path.join(config_dir, 'cartographer.lua')
-    print(f"Using direct path to config directory: {config_dir}")
-    print(f"Lua file path: {lua_file}")
-    print(f"Lua file exists: {os.path.exists(lua_file)}")
+    # print(f"Using direct path to config directory: {config_dir}")
+    # print(f"Lua file path: {lua_file}")
+    # print(f"Lua file exists: {os.path.exists(lua_file)}")
     
     # Declare launch arguments
     use_sim_time = LaunchConfiguration('use_sim_time')
