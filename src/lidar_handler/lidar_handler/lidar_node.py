@@ -50,10 +50,10 @@ class LidarNode(Node):
         lidar_transform = carla.Transform(carla.Location(x=1.5, z=2.2))
         self.lidar = self.world.spawn_actor(lidar_bp, lidar_transform, attach_to=self.vehicle)
 
-        self.lidar.listen(lambda data: self._lidar_callback(data))
+        self.lidar.listen(lambda data: self.lidar_callback(data))
         self.get_logger().info("LiDAR sensor attached and streaming.")
 
-    def _lidar_callback(self, data):
+    def lidar_callback(self, data):
         # Convert LiDAR raw data to PointCloud2
         points = np.frombuffer(data.raw_data, dtype=np.float32).reshape(-1, 4)
         cloud_msg = self.create_pointcloud2(points[:, :3])
