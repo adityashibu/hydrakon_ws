@@ -7,3 +7,5 @@
 *.gv
 
 **/__pycache__/
+
+.FAST_LIO_ROS2
