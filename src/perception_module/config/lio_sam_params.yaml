@@ -1,0 +1,69 @@
+lio_sam:
+  ros__parameters:
+    # Topics - matching your current CARLA setup
+    pointCloudTopic: "/carla/lidar"
+    imuTopic: "/carla/imu_sensor"
+    odomTopic: "odometry/imu"
+    gpsTopic: "/carla/gnss"
+    
+    # Frames - matching your current tf tree
+    lidarFrame: "lidar_link"
+    baselinkFrame: "base_link"
+    odometryFrame: "odom"
+    mapFrame: "map"
+    
+    # GPS Settings
+    useImuHeadingInitialization: true
+    useGpsElevation: false
+    gpsCovThreshold: 2.0
+    poseCovThreshold: 25.0
+    
+    # Sensor Configuration - matching your CARLA LiDAR setup
+    sensor: velodyne
+    N_SCAN: 64       
+    timeField: "time"             # Match your CARLA LiDAR channels
+    Horizon_SCAN: 1800
+    downsampleRate: 1
+    lidarMinRange: 1.0
+    lidarMaxRange: 50.0           # Match your current filter range
+    
+    # IMU Configuration - tuned for CARLA
+    imuAccNoise: 3.9939570888238808e-03
+    imuGyrNoise: 1.5636343949698187e-03
+    imuAccBiasN: 6.4356659353532566e-05
+    imuGyrBiasN: 3.5640318696367613e-05
+    imuGravity: 9.80665
+    imuRPYWeight: 0.01
+    
+    # Extrinsics: LiDAR to base_link (matching your carla_vehicle.py setup)
+    extrinsicTrans: [0.0, 0.0, 2.0]  # LiDAR at 2m height
+    extrinsicRot: [-1, 0, 0,
+                    0, 1, 0,
+                    0, 0, -1]
+    extrinsicRPY: [0, 1, 0,
+                   -1, 0, 0,
+                   0, 0, 1]
+    
+    # LOAM Feature Extraction
+    edgeThreshold: 1.0
+    surfThreshold: 0.1
+    edgeFeatureMinValidNum: 10
+    surfFeatureMinValidNum: 100
+    
+    # Loop Closure - optimized for Formula Student tracks
+    loopClosureEnableFlag: true
+    loopClosureFrequency: 1.0
+    surroundingkeyframeAddingDistThreshold: 1.0      # Dense keyframes for small tracks
+    surroundingkeyframeAddingAngleThreshold: 0.2
+    surroundingkeyframeDensity: 1.0
+    surroundingkeyframeSearchRadius: 25.0            # Reduced for Formula Student track size
+    
+    # Optimization
+    mappingProcessInterval: 0.15    # 6.7 Hz - good balance for real-time
+    mappingCornerLeafSize: 0.2
+    mappingSurfLeafSize: 0.4
+    
+    # Visualization
+    globalMapVisualizationSearchRadius: 1000.0
+    globalMapVisualizationPoseDensity: 10.0
+    globalMapVisualizationLeafSize: 1.0

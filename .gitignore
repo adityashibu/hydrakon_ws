@@ -1,9 +1,11 @@
-/build
-/install
-/log
+**/build
+**/install
+**/log
 
 *.txt
 *.pdf
 *.gv
 
-**/__pycache__
+**/__pycache__/
+
+.FAST_LIO_ROS2
