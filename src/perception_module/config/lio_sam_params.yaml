@@ -20,7 +20,8 @@ lio_sam:
     
     # Sensor Configuration - matching your CARLA LiDAR setup
     sensor: velodyne
-    N_SCAN: 64                    # Match your CARLA LiDAR channels
+    N_SCAN: 64       
+    timeField: "time"             # Match your CARLA LiDAR channels
     Horizon_SCAN: 1800
     downsampleRate: 1
     lidarMinRange: 1.0
