@@ -8,8 +8,8 @@ world = client.get_world()
 
 # Start with clear weather
 weather = world.get_weather()
-weather.precipitation = 0.0
-weather.precipitation_deposits = 0.0
+weather.precipitation = 100.0
+weather.precipitation_deposits = 100.0
 world.set_weather(weather)
 print("Starting with clear weather")
 time.sleep(2)
