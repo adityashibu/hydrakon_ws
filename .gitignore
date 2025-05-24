@@ -5,3 +5,5 @@
 *.txt
 *.pdf
 *.gv
+
+**/__pycache__
