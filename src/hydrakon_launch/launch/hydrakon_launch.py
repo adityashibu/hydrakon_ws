@@ -164,6 +164,19 @@ def generate_launch_description():
             ]
         ),
 
+        # TimerAction(
+        #     period=5.0,  # Start after other systems are initialized
+        #     actions=[
+        #         Node(
+        #             package='planning_module',
+        #             executable='planning_node',
+        #             name='planning_node',
+        #             output='screen',
+        #             parameters=['/home/aditya/hydrakon_ws/src/planning_module/config/planning_params.yaml']
+        #         )
+        #     ]
+        # ),
+
         # Node(
         #     package='rviz2',
         #     executable='rviz2',

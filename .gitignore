@@ -7,5 +7,6 @@
 *.gv
 
 **/__pycache__/
+**/speed_logs/
 
 .FAST_LIO_ROS2
