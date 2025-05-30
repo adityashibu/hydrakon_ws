@@ -90,7 +90,7 @@ class VehicleNode(Node):
         try:
             blueprint_library = self.world.get_blueprint_library()
             vehicle_bp = blueprint_library.filter('vehicle.*')[2]
-                
+            
             if not vehicle_bp:
                 self.get_logger().error("No vehicle blueprints found")
                 return None

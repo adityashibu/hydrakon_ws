@@ -27,6 +27,14 @@ def generate_launch_description():
             output='screen'
         ),
 
+        # Node(
+        # package='tf2_ros',
+        # executable='static_transform_publisher',
+        # name='map_to_base_link_tf',
+        # arguments=['0', '0', '0', '0', '0', '0', 'map', 'base_link'],
+        # output='screen'
+        # ),
+
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -102,7 +110,7 @@ def generate_launch_description():
                         'map_frame': 'map',
                         'odom_frame': 'odom',
                         'base_link_frame': 'base_link',
-                        'world_frame': 'map',
+                        'world_frame': 'odom',
                         
                         'imu0': '/carla/imu_sensor',
                         'imu0_config': [False, False, False,
@@ -156,11 +164,24 @@ def generate_launch_description():
             ]
         ),
 
+        # TimerAction(
+        #     period=5.0,  # Start after other systems are initialized
+        #     actions=[
+        #         Node(
+        #             package='planning_module',
+        #             executable='planning_node',
+        #             name='planning_node',
+        #             output='screen',
+        #             parameters=['/home/aditya/hydrakon_ws/src/planning_module/config/planning_params.yaml']
+        #         )
+        #     ]
+        # ),
+
         # Node(
         #     package='rviz2',
         #     executable='rviz2',
         #     name='rviz2',
-        #     arguments=['-d', 'config/lidar_rviz_config.rviz'],
+        #     arguments=['-d', 'config/setup_config.rviz'],
         #     output='screen'
         # )
 

@@ -1,3 +1,24 @@
-# Configuration for <package_name>
-param1: 1
-param2: 2
+# Pure Pursuit Planning Parameters
+
+planning_node:
+  ros__parameters:
+    # Pure Pursuit Parameters
+    lookahead_distance: 8.0        # meters - distance to look ahead for target point
+    wheelbase: 2.7                 # meters - vehicle wheelbase (typical Formula Student)
+    max_steering_angle: 0.52       # radians (~30 degrees max steering)
+    
+    # CARLA Connection
+    carla_host: "localhost"
+    carla_port: 2000
+    
+    # Speed Control Parameters
+    target_speed: 15.0             # m/s - desired speed
+    speed_kp: 0.3                  # proportional gain for speed control
+    brake_kp: 0.5                  # proportional gain for braking
+    
+    # Path Planning Parameters
+    path_update_rate: 10.0         # Hz - how often to update the reference path
+    min_cones_for_path: 4          # minimum number of cones needed to generate a path
+    
+    # Safety Parameters
+    emergency_brake_distance: 3.0   # meters - distance to emergency brake if no path
