@@ -10,8 +10,10 @@ from cv_bridge import CvBridge
 import numpy as np
 import carla
 import cv2
-import time
 import traceback
+from ultralytics import YOLO
+import threading
+
 
 class ZED2iCameraPublisher(Node):
     def __init__(self):
@@ -48,6 +50,12 @@ class ZED2iCameraPublisher(Node):
         self.camera_info_pub = self.create_publisher(CameraInfo, self.camera_info_topic, 10)
         
         self.bridge = CvBridge()
+
+        self.yolo_model = YOLO('/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt')  # Update path
+
+        self.rgb_image = None
+        self.depth_array = None
+        self.lock = threading.Lock()
         
         self.client = None
         self.world = None
@@ -145,47 +153,58 @@ class ZED2iCameraPublisher(Node):
             self.get_logger().error(traceback.format_exc())
     
     def rgb_callback(self, image):
-        """Process and publish RGB image"""
+        """Process and publish RGB image and run YOLO if depth is available"""
         try:
-            array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+            array = np.frombuffer(image.raw_data, dtype=np.uint8)
             array = np.reshape(array, (image.height, image.width, 4))
             rgb_image = cv2.cvtColor(array, cv2.COLOR_BGRA2BGR)
-            
+
+            # Publish image to ROS
             msg = self.bridge.cv2_to_imgmsg(rgb_image, encoding='bgr8')
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.header.frame_id = "camera_link"
-            
             self.rgb_pub.publish(msg)
+
             self.rgb_count += 1
             self.publish_camera_info(image.width, image.height)
+
+            # Store for YOLO
+            with self.lock:
+                self.rgb_image = rgb_image.copy()
+
+            self.try_run_yolo()
+
             if self.rgb_count == 1 or (self.debug_level > 1 and self.rgb_count % 100 == 0):
                 self.get_logger().info(f"RGB image published. Size: {image.height}x{image.width}, Count: {self.rgb_count}")
-            
         except Exception as e:
             self.get_logger().error(f"Error in RGB callback: {e}")
     
     def depth_callback(self, image):
         """Process and publish depth image"""
         try:
-            array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+            array = np.frombuffer(image.raw_data, dtype=np.uint8)
             array = np.reshape(array, (image.height, image.width, 4))
-
             normalized = array.astype(np.float32) / 255.0
             depth_array = (normalized[:, :, 2] + normalized[:, :, 1] * 256.0 + normalized[:, :, 0] * 256.0 * 256.0) / 1000.0
+
             msg = self.bridge.cv2_to_imgmsg(depth_array, encoding='32FC1')
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.header.frame_id = "camera_link"
             self.depth_pub.publish(msg)
+
             self.depth_count += 1
 
-            if self.depth_count == 1 or (self.debug_level > 1 and self.depth_count % 100 == 0):
-                self.get_logger().info(f"Depth image published. Size: {image.height}x{image.width}, Count: {self.depth_count}")
+            # Store for YOLO
+            with self.lock:
+                self.depth_array = depth_array.copy()
+
+            self.try_run_yolo()
+
             if self.debug_level > 1 and self.depth_count % 100 == 0:
                 min_depth = np.min(depth_array)
                 max_depth = np.max(depth_array)
                 mean_depth = np.mean(depth_array)
                 self.get_logger().info(f"Depth range: {min_depth:.2f}m - {max_depth:.2f}m, Mean: {mean_depth:.2f}m")
-            
         except Exception as e:
             self.get_logger().error(f"Error in depth callback: {e}")
     
@@ -236,6 +255,45 @@ class ZED2iCameraPublisher(Node):
                 self.get_logger().warn("Could not check vehicle status, attempting to find a new one")
                 self.vehicle = None
                 self.find_vehicle()
+
+    def try_run_yolo(self):
+        """Run YOLO detection if both RGB and depth images are ready"""
+        try:
+            with self.lock:
+                if self.rgb_image is None or self.depth_array is None:
+                    return
+                rgb = self.rgb_image.copy()
+                depth = self.depth_array.copy()
+                self.rgb_image = None
+                self.depth_array = None
+
+            results = self.yolo_model(rgb, conf=0.3)[0]
+
+            detections = []
+            for box in results.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                cls = int(box.cls.item())
+                conf = float(box.conf.item())
+                cx = (x1 + x2) // 2
+                cy = min((y1 + y2) // 2, depth.shape[0] - 1)
+                try:
+                    depth_est = float(depth[cy, cx])
+                except:
+                    depth_est = -1.0
+
+                detections.append({
+                    "box": (x1, y1, x2, y2),
+                    "cls": cls,
+                    "conf": conf,
+                    "depth": depth_est
+                })
+
+            if self.debug_level > 0 and detections:
+                self.get_logger().info(f"YOLO detected {len(detections)} cones:")
+                for det in detections:
+                    self.get_logger().info(f" - Class: {det['cls']}, Depth: {det['depth']:.2f}m, Conf: {det['conf']:.2f}")
+        except Exception as e:
+            self.get_logger().error(f"Error in YOLO processing: {e}")
     
     def destroy_node(self):
         """Clean up CARLA resources"""
