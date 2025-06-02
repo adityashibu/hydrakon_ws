@@ -1121,7 +1121,7 @@ class CarlaGateRacingSystem:
             print(f"Using vehicle blueprint: {vehicle_bp.id}")
             
             spawn_transform = carla.Transform(
-                carla.Location(x=-35.0, y=0.0, z=5.0),
+                carla.Location(x=170.0, y=0.0, z=2.0),
                 carla.Rotation(pitch=0.0, yaw=0.0, roll=0.0)
             )
             vehicle = self.world.spawn_actor(vehicle_bp, spawn_transform)

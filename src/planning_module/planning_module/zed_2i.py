@@ -192,7 +192,7 @@ class Zed2iCamera:
                     
                     print(f"Detected object: Class ID = {cls}, Confidence = {conf:.2f}")
                     
-                    if (cls == 0 or cls == 1) and conf > 0.3:
+                    if cls in [0, 1, 2] and conf > 0.3:
                         center_x = (x1 + x2) // 2
                         bottom_y = min(y2, depth_array.shape[0] - 1)
                         
@@ -281,7 +281,12 @@ class Zed2iCamera:
                         self.cone_detections.append(detection)
                         
                         x1, y1, x2, y2 = cone['box']
-                        color = (0, 255, 0) if cone['cls'] == 0 else (255, 0, 0)
+                        color_map = {
+                            0: (0, 255, 255),
+                            1: (255, 0, 0),
+                            2: (0, 165, 255),
+                        }
+                        color = color_map.get(cone['cls'], (255, 255, 255))
                         cv2.rectangle(self.rgb_image, (x1, y1), (x2, y2), color, 2)
                         label = f"Cone: {final_depth:.2f}m"
                         cv2.putText(self.rgb_image, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
