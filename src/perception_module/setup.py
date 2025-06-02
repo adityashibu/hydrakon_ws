@@ -24,6 +24,9 @@ setup(
         'console_scripts': [
             # 'perception_node = perception_module.perception_node:main',
             'navsat_transform_node = perception_module.navsat_transform_node:main',
+            # 'lio_image_projection = perception_module.image_projection_node:main',
+            # 'lio_imu_preintegration = perception_module.imu_preintegration_node:main',
+            # # 'lio_map_optimization = perception_module.map_optimization_node:main',
         ],
     },
 )

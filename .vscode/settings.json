@@ -1,0 +1,28 @@
+{
+    "files.associations": {
+        "functional": "cpp"
+    },
+    "python.autoComplete.extraPaths": [
+        "/home/legion5/hydrakon_ws/install/zed2i_camera_sim/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/planning_module/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/perception_module/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/lidar_handler/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/lidar_cluster/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/hydrakon_launch/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/carla_vehicle_manager/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/legion5/hydrakon_ws/install/zed2i_camera_sim/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/planning_module/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/perception_module/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/lidar_handler/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/lidar_cluster/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/hydrakon_launch/lib/python3.10/site-packages",
+        "/home/legion5/hydrakon_ws/install/carla_vehicle_manager/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "C_Cpp.errorSquiggles": "disabled"
+}
