@@ -1088,7 +1088,7 @@ class CarlaGateRacingSystem:
         self.running = False
         
     def setup_carla(self):
-        """Initialize CARLA connection and spawn vehicle"""
+        """Initialize CARLA connection and find existing vehicle"""
         try:
             # Connect to CARLA
             self.client = carla.Client('localhost', 2000)
@@ -1098,10 +1098,10 @@ class CarlaGateRacingSystem:
             # Get world
             self.world = self.client.get_world()
             
-            # Spawn vehicle using your specific method
-            self.vehicle = self.spawn_vehicle()
+            # Find existing vehicle instead of spawning new one
+            self.vehicle = self.find_existing_vehicle()
             if not self.vehicle:
-                raise RuntimeError("Failed to spawn vehicle")
+                raise RuntimeError("No existing vehicle found in the world")
             
             return True
             
@@ -1109,31 +1109,46 @@ class CarlaGateRacingSystem:
             print(f"Error setting up CARLA: {e}")
             return False
     
-    def spawn_vehicle(self):
-        """Spawn a vehicle in the CARLA world using your exact method."""
+    def find_existing_vehicle(self):
+        """Find an existing vehicle in the CARLA world"""
         try:
-            blueprint_library = self.world.get_blueprint_library()
-            vehicle_bp = blueprint_library.filter('vehicle.*')[2]
-            if not vehicle_bp:
-                print("ERROR: No vehicle blueprints found")
+            # Get all actors in the world
+            all_actors = self.world.get_actors()
+            
+            # Filter for vehicles
+            vehicles = all_actors.filter('vehicle.*')
+            
+            if not vehicles:
+                print("ERROR: No vehicles found in the world")
+                print("Available actors:")
+                for actor in all_actors:
+                    print(f"  - {actor.type_id} (ID: {actor.id})")
+                return None
+            
+            # Use the first vehicle found
+            vehicle = vehicles[0]
+            transform = vehicle.get_transform()
+            location = transform.location
+            
+            print(f"Found existing vehicle: {vehicle.type_id} (ID: {vehicle.id})")
+            print(f"Vehicle location: x={location.x:.2f}, y={location.y:.2f}, z={location.z:.2f}")
+            print(f"Vehicle rotation: pitch={transform.rotation.pitch:.2f}, yaw={transform.rotation.yaw:.2f}, roll={transform.rotation.roll:.2f}")
+            
+            # Check if vehicle is alive
+            if not vehicle.is_alive:
+                print("ERROR: Found vehicle is not alive")
                 return None
                 
-            print(f"Using vehicle blueprint: {vehicle_bp.id}")
-            
-            spawn_transform = carla.Transform(
-                carla.Location(x=170.0, y=0.0, z=2.0),
-                carla.Rotation(pitch=0.0, yaw=0.0, roll=0.0)
-            )
-            vehicle = self.world.spawn_actor(vehicle_bp, spawn_transform)
-            print(f"Vehicle spawned at {spawn_transform.location}")
-            
-            time.sleep(2.0)
-            if not vehicle.is_alive:
-                print("ERROR: Vehicle failed to spawn or is not alive")
-                return None
+            # List all available vehicles for reference
+            print(f"Available vehicles in world ({len(vehicles)} total):")
+            for i, v in enumerate(vehicles):
+                loc = v.get_transform().location
+                print(f"  {i+1}. {v.type_id} (ID: {v.id}) at ({loc.x:.1f}, {loc.y:.1f}, {loc.z:.1f})")
+                
             return vehicle
+            
         except Exception as e:
-            print(f"Error spawning vehicle: {str(e)}")
+            print(f"Error finding existing vehicle: {str(e)}")
             return None
     
     def setup_camera_and_controller(self, model_path=None):
@@ -1202,7 +1217,7 @@ class CarlaGateRacingSystem:
                     # Create visualization
                     viz_image = self.create_visualization()
                     
-                    cv2.imshow('CARLA Gate Racing - Robust Controller', viz_image)
+                    cv2.imshow('CARLA Gate Racing - Robust Controller (Existing Vehicle)', viz_image)
                     
                     # Check for exit key
                     if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -1222,6 +1237,10 @@ class CarlaGateRacingSystem:
                 return np.zeros((720, 1280, 3), dtype=np.uint8)
                 
             viz_image = self.camera.rgb_image.copy()
+            
+            # Add vehicle info at the top
+            vehicle_info = f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id})"
+            cv2.putText(viz_image, vehicle_info, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             # Process detections for visualization
             cone_detections = getattr(self.camera, 'cone_detections', [])
@@ -1281,6 +1300,7 @@ class CarlaGateRacingSystem:
             # Add enhanced status text with speed information
             speed_stats = self.controller.speed_logger.get_speed_stats()
             status_text = [
+                f"Mode: Using Existing Vehicle",
                 f"Gates Completed: {self.controller.gates_completed}/{self.controller.target_gates}",
                 f"Mission Status: {'COMPLETED' if self.controller.all_gates_completed else 'IN PROGRESS'}",
                 f"Blue Cones: {len([d for d in cone_detections if d.get('cls') == 1])}",
@@ -1295,18 +1315,21 @@ class CarlaGateRacingSystem:
             ]
             
             for i, text in enumerate(status_text):
+                y_pos = 50 + i*20  # Start lower to avoid vehicle info
                 color = (0, 255, 0) if not self.controller.all_gates_completed else (0, 255, 255)
-                if i == 0:  # Gate counter
+                if i == 0:  # Mode info
+                    color = (255, 0, 255)  # Magenta for mode
+                elif i == 1:  # Gate counter
                     color = (0, 255, 255) if self.controller.all_gates_completed else (255, 255, 0)
-                elif i == 4:  # Current speed
+                elif i == 5:  # Current speed
                     color = (0, 255, 255)  # Cyan for current speed
-                elif i == 5:  # Average speed
+                elif i == 6:  # Average speed
                     color = (255, 255, 0)  # Yellow for average speed
-                elif i == 6:  # Max speed
+                elif i == 7:  # Max speed
                     color = (255, 0, 255)  # Magenta for max speed
-                elif i == 9:  # Lost track counter
+                elif i == 10:  # Lost track counter
                     color = (255, 0, 0) if self.controller.lost_track_counter > 10 else (0, 255, 0)
-                cv2.putText(viz_image, text, (10, 30 + i*20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                cv2.putText(viz_image, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
             return viz_image
             
@@ -1328,7 +1351,8 @@ class CarlaGateRacingSystem:
             if not self.setup_camera_and_controller(model_path):
                 return False
             
-            print("System ready! The vehicle will drive through multiple gates using robust control.")
+            print("System ready! Using existing vehicle for gate racing with robust control.")
+            print(f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id})")
             print(f"Target: {self.controller.target_gates} gates")
             print("Press Ctrl+C to stop or 'q' in the display window")
             
@@ -1352,12 +1376,12 @@ class CarlaGateRacingSystem:
             self.cleanup()
     
     def cleanup(self):
-        """Clean up all resources"""
+        """Clean up all resources without destroying the existing vehicle"""
         print("Cleaning up resources...")
         
         self.running = False
         
-        # Stop vehicle
+        # Stop vehicle but don't destroy it since it was pre-existing
         if self.vehicle:
             try:
                 control = carla.VehicleControl()
@@ -1365,6 +1389,7 @@ class CarlaGateRacingSystem:
                 control.throttle = 0.0
                 control.brake = 1.0
                 self.vehicle.apply_control(control)
+                print("Vehicle stopped (not destroyed - was pre-existing)")
                 time.sleep(1.0)
             except:
                 pass
@@ -1383,13 +1408,8 @@ class CarlaGateRacingSystem:
             except:
                 pass
         
-        # Destroy vehicle
-        if self.vehicle:
-            try:
-                self.vehicle.destroy()
-                print("Vehicle destroyed")
-            except:
-                pass
+        # NOTE: We don't destroy the vehicle since it was already in the world
+        # The vehicle will remain for other uses
         
         # Close CV2 windows
         try:
@@ -1397,20 +1417,20 @@ class CarlaGateRacingSystem:
         except:
             pass
         
-        print("Cleanup complete")
+        print("Cleanup complete - existing vehicle preserved")
 
 
 def main():
     """Main function"""
     if len(sys.argv) > 1:
-        model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
+        model_path = sys.argv[1]
         print(f"Using YOLO model: {model_path}")
     else:
         # Default model path based on your structure
         model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
         print(f"Using default YOLO model: {model_path}")
     
-    # Create and run the robust racing system
+    # Create and run the robust racing system with existing vehicle
     racing_system = CarlaGateRacingSystem()
     
     try:

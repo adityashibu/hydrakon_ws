@@ -151,18 +151,18 @@ def generate_launch_description():
                 )
             ]
         ),
-        TimerAction(
-            period=2.0,
-            actions=[
-                Node(
-                    package='zed2i_camera_sim',
-                    executable='zed_node',
-                    name='zed_camera_sim_node',
-                    output='screen',
-                    parameters=['config/zed_camera_params.yaml']
-                )
-            ]
-        ),
+        # TimerAction(
+        #     period=2.0,
+        #     actions=[
+        #         Node(
+        #             package='zed2i_camera_sim',
+        #             executable='zed_node',
+        #             name='zed_camera_sim_node',
+        #             output='screen',
+        #             parameters=['config/zed_camera_params.yaml']
+        #         )
+        #     ]
+        # ),
 
         # TimerAction(
         #     period=5.0,  # Start after other systems are initialized
