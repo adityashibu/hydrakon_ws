@@ -1423,7 +1423,7 @@ class CarlaGateRacingSystem:
 def main():
     """Main function"""
     if len(sys.argv) > 1:
-        model_path = sys.argv[1]
+        model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
         print(f"Using YOLO model: {model_path}")
     else:
         # Default model path based on your structure
