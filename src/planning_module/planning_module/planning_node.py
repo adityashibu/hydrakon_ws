@@ -5,164 +5,111 @@ import time
 import threading
 import signal
 import sys
-import csv
-import os
-from datetime import datetime
 from collections import deque
 from .zed_2i import Zed2iCamera
 
-class SpeedLogger:
-    def __init__(self, log_dir="speed_logs"):
-        self.log_dir = log_dir
-        self.log_file = None
-        self.csv_writer = None
-        self.session_start_time = None
-        self.speed_history = deque(maxlen=100)  # Keep last 100 speed readings
-        self.distance_traveled = 0.0
-        self.last_position = None
+class LapCounter:
+    def __init__(self):
+        self.laps_completed = 0
+        self.last_orange_gate_time = 0
+        self.cooldown_duration = 3.0  # 3 seconds cooldown between lap counts
+        self.orange_gate_passed_threshold = 2.0  # Distance threshold for passing through orange gate
         
-        # Create log directory if it doesn't exist
-        os.makedirs(log_dir, exist_ok=True)
+    def check_orange_gate_passage(self, orange_cones, vehicle_position):
+        """Check if vehicle has passed between two orange cones"""
+        current_time = time.time()
         
-        # Initialize log file
-        self.init_log_file()
+        # Cooldown check to prevent multiple counts for same gate
+        if current_time - self.last_orange_gate_time < self.cooldown_duration:
+            return False
+        
+        # Check single orange cone or pair
+        if len(orange_cones) < 1:
+            return False
+        
+        # Find the closest orange gate (pair of orange cones) or single cone
+        best_gate = self.find_closest_orange_gate(orange_cones)
+        
+        if not best_gate:
+            # If no gate found, try single closest orange cone
+            if len(orange_cones) >= 1:
+                closest_orange = min(orange_cones, key=lambda c: c['depth'])
+                if closest_orange['depth'] < 3.0:  # Very close to single orange cone
+                    self.laps_completed += 1
+                    self.last_orange_gate_time = current_time
+                    print(f"🏁 LAP {self.laps_completed} COMPLETED! Passed single orange cone!")
+                    return True
+            return False
+        
+        # Check if vehicle is close enough to the gate center
+        gate_center_x = best_gate['midpoint_x']
+        gate_center_y = best_gate['midpoint_y']
+        
+        # Convert to vehicle-relative coordinates for distance check
+        distance_to_gate = np.sqrt(gate_center_x**2 + gate_center_y**2)
+        
+        print(f"DEBUG: Orange gate distance: {distance_to_gate:.2f}m, threshold: {self.orange_gate_passed_threshold:.2f}m")
+        print(f"DEBUG: Gate center: ({gate_center_x:.2f}, {gate_center_y:.2f})")
+        
+        if distance_to_gate < self.orange_gate_passed_threshold:
+            self.laps_completed += 1
+            self.last_orange_gate_time = current_time
+            print(f"🏁 LAP {self.laps_completed} COMPLETED! Passed through orange gate!")
+            return True
+        
+        return False
     
-    def init_log_file(self):
-        """Initialize CSV log file with headers"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = f"speed_log_{timestamp}.csv"
-        self.log_file_path = os.path.join(self.log_dir, log_filename)
+    def find_closest_orange_gate(self, orange_cones):
+        """Find the closest valid orange gate (pair of orange cones)"""
+        if len(orange_cones) < 2:
+            return None
         
-        self.log_file = open(self.log_file_path, 'w', newline='')
-        self.csv_writer = csv.writer(self.log_file)
+        # Sort orange cones by depth (closest first)
+        orange_cones.sort(key=lambda c: c['depth'])
         
-        # Write CSV headers
-        headers = [
-            'timestamp',
-            'elapsed_time',
-            'speed_mps',
-            'speed_kmh',
-            'speed_mph',
-            'target_speed',
-            'throttle',
-            'brake',
-            'steering',
-            'position_x',
-            'position_y',
-            'position_z',
-            'distance_traveled',
-            'gates_completed',
-            'navigation_type'
-        ]
-        self.csv_writer.writerow(headers)
-        self.log_file.flush()
-        
-        self.session_start_time = time.time()
-        print(f"Speed logger initialized: {self.log_file_path}")
-    
-    def log_speed_data(self, vehicle, target_speed, throttle, brake, steering, 
-                      gates_completed, navigation_type="unknown"):
-        """Log current speed and vehicle data"""
-        try:
-            # Get current time
-            current_time = time.time()
-            elapsed_time = current_time - self.session_start_time
-            
-            # Get vehicle velocity and position
-            velocity = vehicle.get_velocity()
-            transform = vehicle.get_transform()
-            location = transform.location
-            
-            # Calculate current speed (m/s)
-            current_speed_mps = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
-            
-            # Convert to other units
-            current_speed_kmh = current_speed_mps * 3.6
-            current_speed_mph = current_speed_mps * 2.237
-            
-            # Calculate distance traveled
-            if self.last_position is not None:
-                distance_delta = np.sqrt(
-                    (location.x - self.last_position.x)**2 + 
-                    (location.y - self.last_position.y)**2 + 
-                    (location.z - self.last_position.z)**2
-                )
-                self.distance_traveled += distance_delta
-            
-            self.last_position = location
-            
-            # Add to speed history
-            self.speed_history.append(current_speed_mps)
-            
-            # Write to CSV
-            row_data = [
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],  # timestamp with milliseconds
-                f"{elapsed_time:.3f}",
-                f"{current_speed_mps:.3f}",
-                f"{current_speed_kmh:.3f}",
-                f"{current_speed_mph:.3f}",
-                f"{target_speed:.3f}",
-                f"{throttle:.3f}",
-                f"{brake:.3f}",
-                f"{steering:.3f}",
-                f"{location.x:.3f}",
-                f"{location.y:.3f}",
-                f"{location.z:.3f}",
-                f"{self.distance_traveled:.3f}",
-                gates_completed,
-                navigation_type
-            ]
-            
-            self.csv_writer.writerow(row_data)
-            self.log_file.flush()  # Ensure data is written immediately
-            
-        except Exception as e:
-            print(f"Error logging speed data: {e}")
-    
-    def get_speed_stats(self):
-        """Get current speed statistics"""
-        if not self.speed_history:
-            return {
-                'current': 0.0,
-                'average': 0.0,
-                'max': 0.0,
-                'min': 0.0
-            }
-        
-        speeds = list(self.speed_history)
-        return {
-            'current': speeds[-1],
-            'average': np.mean(speeds),
-            'max': np.max(speeds),
-            'min': np.min(speeds)
-        }
-    
-    def close(self):
-        """Close the log file and print summary"""
-        if self.log_file:
-            try:
-                # Write summary at the end
-                stats = self.get_speed_stats()
-                elapsed_time = time.time() - self.session_start_time
+        # Try to pair cones to form a gate
+        for i in range(len(orange_cones)):
+            for j in range(i + 1, len(orange_cones)):
+                cone1 = orange_cones[i]
+                cone2 = orange_cones[j]
                 
-                print(f"\n{'='*50}")
-                print("SPEED LOGGING SESSION SUMMARY")
-                print(f"{'='*50}")
-                print(f"Log file: {self.log_file_path}")
-                print(f"Session duration: {elapsed_time:.1f} seconds")
-                print(f"Distance traveled: {self.distance_traveled:.2f} meters")
-                print(f"Average speed: {stats['average']:.2f} m/s ({stats['average']*3.6:.2f} km/h)")
-                print(f"Maximum speed: {stats['max']:.2f} m/s ({stats['max']*3.6:.2f} km/h)")
-                print(f"Minimum speed: {stats['min']:.2f} m/s ({stats['min']*3.6:.2f} km/h)")
-                print(f"Speed readings: {len(self.speed_history)}")
-                print(f"{'='*50}")
-                
-                self.log_file.close()
-                self.log_file = None
-                
-            except Exception as e:
-                print(f"Error closing speed logger: {e}")
-
+                # Check if cones can form a valid gate
+                if self.is_valid_orange_gate(cone1, cone2):
+                    gate = {
+                        'cone1': cone1,
+                        'cone2': cone2,
+                        'midpoint_x': (cone1['x'] + cone2['x']) / 2,
+                        'midpoint_y': (cone1['y'] + cone2['y']) / 2,
+                        'width': abs(cone1['x'] - cone2['x']),
+                        'avg_depth': (cone1['depth'] + cone2['depth']) / 2
+                    }
+                    print(f"DEBUG: Found orange gate - Width: {gate['width']:.2f}m, Depth: {gate['avg_depth']:.2f}m")
+                    return gate
+        
+        return None
+    
+    def is_valid_orange_gate(self, cone1, cone2):
+        """Check if two orange cones can form a valid gate"""
+        # Check depth similarity
+        depth_diff = abs(cone1['depth'] - cone2['depth'])
+        if depth_diff > 3.0:  # More lenient for orange cones
+            print(f"DEBUG: Orange gate rejected - depth diff: {depth_diff:.2f}m")
+            return False
+        
+        # Check gate width (should be reasonable for a lap marker)
+        width = abs(cone1['x'] - cone2['x'])
+        if width < 1.5 or width > 12.0:  # More lenient width range
+            print(f"DEBUG: Orange gate rejected - width: {width:.2f}m")
+            return False
+        
+        # Check if gate is close enough
+        avg_depth = (cone1['depth'] + cone2['depth']) / 2
+        if avg_depth > 15.0:  # Allow farther orange gates
+            print(f"DEBUG: Orange gate rejected - too far: {avg_depth:.2f}m")
+            return False
+        
+        print(f"DEBUG: Valid orange gate found - Width: {width:.2f}m, Depth: {avg_depth:.2f}m")
+        return True
 
 class PurePursuitController:
     def __init__(self, vehicle, lookahead_distance=4.0):
@@ -190,7 +137,6 @@ class PurePursuitController:
         # State tracking
         self.last_steering = 0.0
         self.steering_history = deque(maxlen=5)
-        self.all_gates_completed = False
         
         # NEW: Turn state tracking
         self.current_turn_type = "straight"  # "straight", "gentle", "sharp", "u_turn"
@@ -198,33 +144,23 @@ class PurePursuitController:
         self.path_offset = 0.0  # Current path offset for wider turns
         self.gate_sequence = deque(maxlen=5)  # Track recent gates for turn prediction
         
-        # Gate tracking
-        self.gates_completed = 0
-        self.target_gates = 3  # Number of gates to complete
-        self.current_gate = None
-        self.previous_gate = None
-        self.gate_passed_threshold = 2.0  # Distance threshold for passing through gate
-        self.cooldown_counter = 0
-        self.cooldown_duration = 15  # Frames to wait after passing a gate
-        
-        # Much more restrictive track following parameters
+        # Track following parameters
         self.track_width_min = 3.0  # Minimum track width (meters)
         self.track_width_max = 5.0  # Maximum track width (meters) - reduced
         self.max_depth_diff = 1.0   # Maximum depth difference between gate cones - reduced
         self.max_lateral_jump = 1.5 # Maximum lateral movement between consecutive gates - reduced
         self.forward_focus_angle = 30.0  # Only consider cones within this angle (degrees) from vehicle heading
         
-        # Gate validation - simplified
-        self.gate_history = deque(maxlen=3)
-        self.required_consecutive_gates = 2  # Reduced for faster response
-        self.consecutive_valid_gates = 0
-        
         # Backup navigation when no gates found
         self.lost_track_counter = 0
         self.max_lost_track_frames = 20
         
-        # Initialize speed logger
-        self.speed_logger = SpeedLogger()
+        # Distance tracking for basic stats
+        self.distance_traveled = 0.0
+        self.last_position = None
+        
+        # Initialize lap counter
+        self.lap_counter = LapCounter()
     
     def detect_turn_type(self, current_gate, blue_cones, yellow_cones):
         """Detect the type of turn and calculate appropriate path widening"""
@@ -395,7 +331,7 @@ class PurePursuitController:
         # Additional speed reduction based on steering angle
         steering_factor = 1.0 - 0.7 * abs(steering_angle)
         
-        # Speed reduction when approaching gates
+        # Speed reduction when approaching targets
         if current_depth < 6.0:
             distance_factor = 0.7
         elif current_depth < 3.0:
@@ -426,10 +362,11 @@ class PurePursuitController:
     def process_cone_detections(self, cone_detections):
         """Process cone detections with strict spatial filtering to focus on immediate track"""
         if not cone_detections:
-            return [], []
+            return [], [], []
             
         blue_cones = []    # Class 1 - LEFT side
         yellow_cones = []  # Class 0 - RIGHT side
+        orange_cones = []  # Class 2 - ORANGE (lap markers)
         
         try:
             for detection in cone_detections:
@@ -457,9 +394,13 @@ class PurePursuitController:
                 except (ValueError, TypeError):
                     continue
                 
-                # Filter by depth range - much more restrictive
-                if depth < self.min_depth or depth > self.max_depth:
-                    continue
+                # Filter by depth range - more lenient for orange cones
+                if cls == 2:  # Orange cone - allow farther detection
+                    if depth < 1.0 or depth > 15.0:
+                        continue
+                else:  # Blue/Yellow cones - strict filtering
+                    if depth < self.min_depth or depth > self.max_depth:
+                        continue
                     
                 center_x = (x1 + x2) / 2
                 center_y = (y1 + y2) / 2
@@ -467,17 +408,26 @@ class PurePursuitController:
                 # Convert to world coordinates
                 world_x, world_y = self.image_to_world_coords(center_x, center_y, depth)
                 
-                # CRITICAL: Filter by lateral distance - only consider cones near the vehicle path
-                if abs(world_x) > self.max_lateral_distance:
-                    continue
+                # CRITICAL: Filter by lateral distance - more lenient for orange cones
+                if cls == 2:  # Orange cone - allow wider lateral range
+                    if abs(world_x) > 8.0:  # Wider range for orange cones
+                        continue
+                else:  # Blue/Yellow cones - strict filtering
+                    if abs(world_x) > self.max_lateral_distance:
+                        continue
                 
-                # CRITICAL: Filter by forward focus angle - only consider cones roughly ahead
+                # CRITICAL: Filter by forward focus angle - more lenient for orange cones
                 angle_to_cone = np.degrees(abs(np.arctan2(world_x, world_y)))
-                if angle_to_cone > self.forward_focus_angle:
-                    continue
+                if cls == 2:  # Orange cone - allow wider angle
+                    if angle_to_cone > 60.0:  # Wider angle for orange cones
+                        continue
+                else:  # Blue/Yellow cones - strict filtering
+                    if angle_to_cone > self.forward_focus_angle:
+                        continue
                 
                 # Only consider cones that are reasonably positioned for track boundaries
                 # Blue cones should be on the left (negative x), yellow on the right (positive x)
+                # Orange cones can be anywhere (lap markers)
                 if cls == 1 and world_x > 1.0:  # Blue cone too far right
                     continue
                 if cls == 0 and world_x < -1.0:  # Yellow cone too far left
@@ -498,25 +448,31 @@ class PurePursuitController:
                     blue_cones.append(cone_data)
                 elif cls == 0:  # Yellow cone - RIGHT side  
                     yellow_cones.append(cone_data)
+                elif cls == 2:  # Orange cone - LAP MARKER
+                    orange_cones.append(cone_data)
                     
         except Exception as e:
             print(f"ERROR processing cone detections: {e}")
-            return [], []
+            return [], [], []
         
         # Sort by depth (closest first), then by angle (most centered first)
         blue_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
         yellow_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
+        orange_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
         
         # Debug filtered cones
-        print(f"DEBUG: After spatial filtering - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
+        print(f"DEBUG: After spatial filtering - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
         if blue_cones:
             closest_blue = blue_cones[0]
             print(f"  Closest blue: x={closest_blue['x']:.2f}, y={closest_blue['y']:.2f}, angle={closest_blue['angle_from_center']:.1f}°")
         if yellow_cones:
             closest_yellow = yellow_cones[0]
             print(f"  Closest yellow: x={closest_yellow['x']:.2f}, y={closest_yellow['y']:.2f}, angle={closest_yellow['angle_from_center']:.1f}°")
+        if orange_cones:
+            closest_orange = orange_cones[0]
+            print(f"  Closest orange: x={closest_orange['x']:.2f}, y={closest_orange['y']:.2f}, angle={closest_orange['angle_from_center']:.1f}°")
         
-        return blue_cones, yellow_cones
+        return blue_cones, yellow_cones, orange_cones
     
     def is_valid_track_segment(self, blue, yellow):
         """Strict validation for immediate track segments"""
@@ -551,19 +507,19 @@ class PurePursuitController:
             print(f"ERROR in track segment validation: {e}")
             return False
     
-    def find_best_gate(self, blue_cones, yellow_cones):
-        """Find the best immediate gate with strict proximity focus"""
+    def find_best_track_segment(self, blue_cones, yellow_cones):
+        """Find the best immediate track segment with strict proximity focus"""
         if not blue_cones or not yellow_cones:
-            print(f"DEBUG: Cannot form gate - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
+            print(f"DEBUG: Cannot form track segment - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
             return None
             
-        print(f"DEBUG: Finding immediate gate from {len(blue_cones)} blue and {len(yellow_cones)} yellow cones")
+        print(f"DEBUG: Finding immediate track segment from {len(blue_cones)} blue and {len(yellow_cones)} yellow cones")
         
         # Only consider the closest 3 cones of each color to focus on immediate track
         blue_candidates = blue_cones[:3]
         yellow_candidates = yellow_cones[:3]
         
-        valid_gates = []
+        valid_segments = []
         
         try:
             for blue in blue_candidates:
@@ -572,8 +528,8 @@ class PurePursuitController:
                     if not self.is_valid_track_segment(blue, yellow):
                         continue
                     
-                    # Create gate
-                    gate = {
+                    # Create track segment
+                    segment = {
                         'blue': blue,
                         'yellow': yellow,
                         'midpoint_x': (blue['x'] + yellow['x']) / 2,
@@ -583,38 +539,38 @@ class PurePursuitController:
                         'confidence': (blue.get('confidence', 1.0) + yellow.get('confidence', 1.0)) / 2
                     }
                     
-                    # Additional validation: gate should be roughly centered in front of vehicle
-                    if abs(gate['midpoint_x']) < 2.0:  # Gate center within 2m of vehicle centerline
-                        valid_gates.append(gate)
+                    # Additional validation: segment should be roughly centered in front of vehicle
+                    if abs(segment['midpoint_x']) < 2.0:  # Segment center within 2m of vehicle centerline
+                        valid_segments.append(segment)
             
-            if not valid_gates:
-                print("DEBUG: No valid immediate gates found")
+            if not valid_segments:
+                print("DEBUG: No valid immediate track segments found")
                 return None
             
             # Sort by distance (closest first), heavily prioritize centerline alignment
-            def gate_score(g):
-                distance_score = g['avg_depth']
-                centerline_score = abs(g['midpoint_x']) * 3.0  # Heavy penalty for off-center gates
+            def segment_score(s):
+                distance_score = s['avg_depth']
+                centerline_score = abs(s['midpoint_x']) * 3.0  # Heavy penalty for off-center segments
                 return distance_score + centerline_score
             
-            valid_gates.sort(key=gate_score)
-            best_gate = valid_gates[0]
+            valid_segments.sort(key=segment_score)
+            best_segment = valid_segments[0]
             
-            print(f"DEBUG: Found immediate track gate:")
-            print(f"  Blue cone (LEFT):  x={best_gate['blue']['x']:6.2f}, y={best_gate['blue']['y']:6.2f}")
-            print(f"  Yellow cone (RIGHT): x={best_gate['yellow']['x']:6.2f}, y={best_gate['yellow']['y']:6.2f}")
-            print(f"  Gate midpoint: x={best_gate['midpoint_x']:6.2f}, y={best_gate['midpoint_y']:6.2f}")
-            print(f"  Gate width: {best_gate['width']:.2f}m, Average depth: {best_gate['avg_depth']:.2f}m")
-            print(f"  Centerline offset: {abs(best_gate['midpoint_x']):.2f}m")
+            print(f"DEBUG: Found immediate track segment:")
+            print(f"  Blue cone (LEFT):  x={best_segment['blue']['x']:6.2f}, y={best_segment['blue']['y']:6.2f}")
+            print(f"  Yellow cone (RIGHT): x={best_segment['yellow']['x']:6.2f}, y={best_segment['yellow']['y']:6.2f}")
+            print(f"  Segment midpoint: x={best_segment['midpoint_x']:6.2f}, y={best_segment['midpoint_y']:6.2f}")
+            print(f"  Segment width: {best_segment['width']:.2f}m, Average depth: {best_segment['avg_depth']:.2f}m")
+            print(f"  Centerline offset: {abs(best_segment['midpoint_x']):.2f}m")
             
-            return best_gate
+            return best_segment
             
         except Exception as e:
-            print(f"ERROR in gate finding: {e}")
+            print(f"ERROR in track segment finding: {e}")
             return None
     
     def follow_cone_line(self, blue_cones, yellow_cones):
-        """Fallback: follow immediate cones when no gates can be formed"""
+        """Fallback: follow immediate cones when no track segments can be formed"""
         # Only consider the closest cones that are directly ahead
         immediate_cones = []
         
@@ -813,54 +769,47 @@ class PurePursuitController:
             print(f"ERROR in steering smoothing: {e}")
             return self.last_steering
     
+    def update_distance_traveled(self):
+        """Update distance traveled for basic tracking"""
+        try:
+            transform = self.vehicle.get_transform()
+            location = transform.location
+            
+            if self.last_position is not None:
+                distance_delta = np.sqrt(
+                    (location.x - self.last_position.x)**2 + 
+                    (location.y - self.last_position.y)**2 + 
+                    (location.z - self.last_position.z)**2
+                )
+                self.distance_traveled += distance_delta
+            
+            self.last_position = location
+            
+        except Exception as e:
+            print(f"Error updating distance: {e}")
+    
     def control_vehicle(self, cone_detections):
         """Main control function with robust error handling and enhanced cone visibility preservation"""
         try:
             print(f"\n{'='*60}")
             print(f"DEBUG: CONTROL CYCLE - {len(cone_detections) if cone_detections else 0} detections")
-            print(f"Gates completed: {self.gates_completed}/{self.target_gates}")
-            print(f"All gates completed: {self.all_gates_completed}")
+            print(f"Laps completed: {self.lap_counter.laps_completed}")
             print(f"Current turn type: {self.current_turn_type}, Direction: {self.turn_direction}")
-            print(f"Cooldown counter: {self.cooldown_counter}")
             print(f"Lost track counter: {self.lost_track_counter}")
             print(f"{'='*60}")
             
-            # If all gates completed, stop the vehicle
-            if self.all_gates_completed:
-                print("DEBUG: All gates completed - stopping vehicle")
-                control = carla.VehicleControl()
-                control.steer = 0.0
-                control.throttle = 0.0
-                control.brake = 1.0
-                self.vehicle.apply_control(control)
-                return 0.0, 0.0
+            # Update distance traveled
+            self.update_distance_traveled()
             
-            # Handle cooldown period after passing a gate
-            if self.cooldown_counter > 0:
-                self.cooldown_counter -= 1
-                print(f"DEBUG: Cooldown period - moving forward slowly ({self.cooldown_counter} frames remaining)")
-                control = carla.VehicleControl()
-                control.steer = 0.0
-                control.throttle = 0.12
-                control.brake = 0.0
-                self.vehicle.apply_control(control)
-                
-                # Reset gate validation during cooldown
-                if self.cooldown_counter == 0:
-                    self.gate_history.clear()
-                    self.consecutive_valid_gates = 0
-                    self.current_gate = None
-                    self.previous_gate = None
-                    self.lost_track_counter = 0
-                    self.current_turn_type = "straight"
-                    self.turn_direction = "none"
-                    print("DEBUG: Cooldown complete - ready for next gate")
-                
-                return 0.0, 0.12
+            # Process cone detections (includes orange cones)
+            blue_cones, yellow_cones, orange_cones = self.process_cone_detections(cone_detections)
+            print(f"DEBUG: Processed cones - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
             
-            # Process cone detections
-            blue_cones, yellow_cones = self.process_cone_detections(cone_detections)
-            print(f"DEBUG: Processed cones - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
+            # Check for lap completion through orange gate
+            if orange_cones:
+                transform = self.vehicle.get_transform()
+                vehicle_position = (transform.location.x, transform.location.y, transform.location.z)
+                self.lap_counter.check_orange_gate_passage(orange_cones, vehicle_position)
             
             # NEW: Enhanced lost track detection with immediate recovery steering
             if len(blue_cones) == 0 and len(yellow_cones) == 0:
@@ -901,15 +850,15 @@ class PurePursuitController:
                     self.vehicle.apply_control(control)
                     return search_steering, 0.1
             
-            # Try to find a gate
-            gate = self.find_best_gate(blue_cones, yellow_cones)
+            # Try to find a track segment
+            track_segment = self.find_best_track_segment(blue_cones, yellow_cones)
             
-            # If no gate found, try cone line following
-            if not gate and (blue_cones or yellow_cones):
-                gate = self.follow_cone_line(blue_cones, yellow_cones)
+            # If no track segment found, try cone line following
+            if not track_segment and (blue_cones or yellow_cones):
+                track_segment = self.follow_cone_line(blue_cones, yellow_cones)
                 print("DEBUG: Using cone line following")
             
-            if not gate:
+            if not track_segment:
                 self.lost_track_counter += 1
                 print(f"DEBUG: No navigation target found - lost track for {self.lost_track_counter} frames")
                 
@@ -936,46 +885,14 @@ class PurePursuitController:
             self.lost_track_counter = 0
             
             # Detect turn type and calculate path widening
-            turn_type, turn_direction, path_offset = self.detect_turn_type(gate, blue_cones, yellow_cones)
+            turn_type, turn_direction, path_offset = self.detect_turn_type(track_segment, blue_cones, yellow_cones)
             self.current_turn_type = turn_type
             self.turn_direction = turn_direction
             self.path_offset = path_offset
             
-            # Update current gate
-            self.current_gate = gate
-            
-            # Check if we've passed through the current gate
-            current_depth = gate['avg_depth']
-            if current_depth < self.gate_passed_threshold and gate.get('type') != 'cone_line':
-                self.gates_completed += 1
-                print(f"DEBUG: 🎉 GATE {self.gates_completed} PASSED! 🎉")
-                print(f"DEBUG: Total gates completed: {self.gates_completed}/{self.target_gates}")
-                
-                # Check if all gates are completed
-                if self.gates_completed >= self.target_gates:
-                    print(f"DEBUG: 🏁 ALL {self.target_gates} GATES COMPLETED! MISSION ACCOMPLISHED! 🏁")
-                    self.all_gates_completed = True
-                    control = carla.VehicleControl()
-                    control.steer = 0.0
-                    control.throttle = 0.0
-                    control.brake = 1.0
-                    self.vehicle.apply_control(control)
-                    return 0.0, 0.0
-                else:
-                    print(f"DEBUG: Looking for next gate... ({self.target_gates - self.gates_completed} remaining)")
-                    self.cooldown_counter = self.cooldown_duration
-                    
-                    # Move forward during cooldown
-                    control = carla.VehicleControl()
-                    control.steer = 0.0
-                    control.throttle = 0.12
-                    control.brake = 0.0
-                    self.vehicle.apply_control(control)
-                    return 0.0, 0.12
-            
             # Adjust target point for wider turns
-            original_target_x = gate['midpoint_x']
-            original_target_y = gate['midpoint_y']
+            original_target_x = track_segment['midpoint_x']
+            original_target_y = track_segment['midpoint_y']
             
             # NEW: Store current target for visibility calculations
             self.current_target_x = original_target_x
@@ -989,6 +906,7 @@ class PurePursuitController:
             smooth_steering = self.smooth_steering(raw_steering)
             
             # Calculate adaptive speed based on turn type
+            current_depth = track_segment['avg_depth']
             target_speed = self.calculate_adaptive_speed(turn_type, smooth_steering, current_depth)
             
             # Get current speed
@@ -1012,19 +930,11 @@ class PurePursuitController:
             
             self.vehicle.apply_control(control)
             
-            # Log speed data
-            navigation_type = f"{gate.get('type', 'gate')}_{turn_type}"
-            self.speed_logger.log_speed_data(
-                self.vehicle, target_speed, control.throttle, control.brake, 
-                smooth_steering, self.gates_completed, navigation_type
-            )
-            
             # Enhanced debug output
             direction = 'LEFT' if smooth_steering > 0 else 'RIGHT' if smooth_steering < 0 else 'STRAIGHT'
-            speed_stats = self.speed_logger.get_speed_stats()
             
             print(f"DEBUG: APPLIED CONTROL:")
-            print(f"  Navigation: {navigation_type}")
+            print(f"  Navigation: {track_segment.get('type', 'track_segment')}_{turn_type}")
             print(f"  Turn Analysis: {turn_type}-{turn_direction} (offset: {path_offset:.2f}m)")
             print(f"  Original target: ({original_target_x:.2f}, {original_target_y:.2f})")
             print(f"  Adjusted target: ({adjusted_target_x:.2f}, {adjusted_target_y:.2f})")
@@ -1034,10 +944,10 @@ class PurePursuitController:
             print(f"  Cone visibility risk: {'HIGH' if abs(original_target_x) > 2.5 else 'MODERATE' if abs(original_target_x) > 1.8 else 'LOW'}")
             print(f"  Throttle: {control.throttle:.2f}")
             print(f"  Brake: {control.brake:.2f}")
-            print(f"  Current Speed: {speed_stats['current']:.1f} m/s ({speed_stats['current']*3.6:.1f} km/h)")
+            print(f"  Current Speed: {current_speed:.1f} m/s ({current_speed*3.6:.1f} km/h)")
             print(f"  Target Speed: {target_speed:.1f} m/s ({target_speed*3.6:.1f} km/h)")
-            print(f"  Avg Speed: {speed_stats['average']:.1f} m/s")
-            print(f"  Distance: {self.speed_logger.distance_traveled:.1f}m")
+            print(f"  Distance: {self.distance_traveled:.1f}m")
+            print(f"  Laps: {self.lap_counter.laps_completed}")
             print(f"{'='*60}\n")
             
             return smooth_steering, target_speed
@@ -1046,27 +956,16 @@ class PurePursuitController:
             print(f"ERROR in vehicle control: {e}")
             import traceback
             traceback.print_exc()
-            # Safe fallback - also log the emergency stop
+            # Safe fallback
             control = carla.VehicleControl()
             control.steer = 0.0
             control.throttle = 0.0
             control.brake = 0.5
             self.vehicle.apply_control(control)
             
-            # Log emergency stop
-            self.speed_logger.log_speed_data(
-                self.vehicle, 0.0, 0.0, 0.5, 0.0, 
-                self.gates_completed, "emergency_stop"
-            )
-            
             return 0.0, 0.0
-    
-    def cleanup(self):
-        """Clean up controller resources"""
-        if hasattr(self, 'speed_logger'):
-            self.speed_logger.close()
 
-class CarlaGateRacingSystem:
+class CarlaRacingSystem:
     def __init__(self):
         self.client = None
         self.world = None
@@ -1169,7 +1068,7 @@ class CarlaGateRacingSystem:
             # Setup robust controller
             self.controller = PurePursuitController(self.vehicle)
             print("Camera and robust controller setup complete")
-            print(f"Speed logging enabled - logs will be saved to: speed_logs/")
+            print(f"Lap counter enabled - orange cones will be detected for lap counting")
             
             return True
             
@@ -1192,13 +1091,6 @@ class CarlaGateRacingSystem:
                 # Control vehicle using robust controller
                 steering, speed = self.controller.control_vehicle(cone_detections)
                 
-                # If all gates completed, stop the system
-                if self.controller.all_gates_completed:
-                    print(f"All {self.controller.target_gates} gates completed! Stopping system in 5 seconds...")
-                    time.sleep(5.0)
-                    self.running = False
-                    break
-                
                 time.sleep(0.05)  # 20 Hz control loop
                 
             except Exception as e:
@@ -1217,7 +1109,7 @@ class CarlaGateRacingSystem:
                     # Create visualization
                     viz_image = self.create_visualization()
                     
-                    cv2.imshow('CARLA Gate Racing - Robust Controller (Existing Vehicle)', viz_image)
+                    cv2.imshow('CARLA Racing with Lap Counter - Robust Controller (Existing Vehicle)', viz_image)
                     
                     # Check for exit key
                     if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -1244,39 +1136,39 @@ class CarlaGateRacingSystem:
             
             # Process detections for visualization
             cone_detections = getattr(self.camera, 'cone_detections', [])
-            if cone_detections and not self.controller.all_gates_completed:
-                blue_cones, yellow_cones = self.controller.process_cone_detections(cone_detections)
+            if cone_detections:
+                blue_cones, yellow_cones, orange_cones = self.controller.process_cone_detections(cone_detections)
                 
                 # Try to find current target
-                gate = self.controller.find_best_gate(blue_cones, yellow_cones)
-                if not gate and (blue_cones or yellow_cones):
-                    gate = self.controller.follow_cone_line(blue_cones, yellow_cones)
+                track_segment = self.controller.find_best_track_segment(blue_cones, yellow_cones)
+                if not track_segment and (blue_cones or yellow_cones):
+                    track_segment = self.controller.follow_cone_line(blue_cones, yellow_cones)
                 
                 # Draw target if found
-                if gate:
+                if track_segment:
                     # Draw target point
-                    depth = gate.get('midpoint_y', 5.0)
-                    angle = np.arctan2(gate.get('midpoint_x', 0), depth)
+                    depth = track_segment.get('midpoint_y', 5.0)
+                    angle = np.arctan2(track_segment.get('midpoint_x', 0), depth)
                     px = int(640 + (angle / np.radians(45)) * 640)
                     py = int(720 - 100 - depth * 25)
                     py = max(50, min(py, 720))
                     px = max(0, min(px, 1280))
                     
                     # Different colors for different navigation types
-                    if gate.get('type') == 'cone_line':
+                    if track_segment.get('type') == 'cone_line':
                         color = (255, 0, 255)  # Magenta for cone line following
                         text = "CONE LINE"
                     else:
-                        color = (0, 0, 255)    # Red for gate
-                        text = "GATE TARGET"
+                        color = (0, 0, 255)    # Red for track segment
+                        text = "TRACK TARGET"
                     
                     cv2.circle(viz_image, (px, py), 15, color, -1)
                     cv2.putText(viz_image, text, (px+20, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                     
-                    # Draw gate line if it's a proper gate
-                    if gate.get('type') != 'cone_line' and 'blue' in gate and 'yellow' in gate:
-                        blue_cone = gate['blue']
-                        yellow_cone = gate['yellow']
+                    # Draw track line if it's a proper track segment
+                    if track_segment.get('type') != 'cone_line' and 'blue' in track_segment and 'yellow' in track_segment:
+                        blue_cone = track_segment['blue']
+                        yellow_cone = track_segment['yellow']
                         
                         # Blue cone position
                         blue_angle = np.arctan2(blue_cone['x'], blue_cone['y'])
@@ -1292,42 +1184,50 @@ class CarlaGateRacingSystem:
                         yellow_py = max(50, min(yellow_py, 720))
                         yellow_px = max(0, min(yellow_px, 1280))
                         
-                        # Draw gate line and cones
+                        # Draw track line and cones
                         cv2.line(viz_image, (blue_px, blue_py), (yellow_px, yellow_py), (0, 255, 0), 4)
                         cv2.circle(viz_image, (blue_px, blue_py), 8, (255, 0, 0), -1)
                         cv2.circle(viz_image, (yellow_px, yellow_py), 8, (0, 255, 255), -1)
+                
+                # Draw orange cones (lap markers)
+                for orange in orange_cones:
+                    orange_angle = np.arctan2(orange['x'], orange['y'])
+                    orange_px = int(640 + (orange_angle / np.radians(45)) * 640)
+                    orange_py = int(720 - 100 - orange['y'] * 25)
+                    orange_py = max(50, min(orange_py, 720))
+                    orange_px = max(0, min(orange_px, 1280))
+                    
+                    # Draw orange cone with distinct marker
+                    cv2.circle(viz_image, (orange_px, orange_py), 12, (0, 165, 255), -1)  # Orange color
+                    cv2.circle(viz_image, (orange_px, orange_py), 12, (255, 255, 255), 2)  # White border
+                    cv2.putText(viz_image, "LAP", (orange_px-15, orange_py-20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
             
-            # Add enhanced status text with speed information
-            speed_stats = self.controller.speed_logger.get_speed_stats()
+            # Add enhanced status text
+            velocity = self.vehicle.get_velocity()
+            current_speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
+            
             status_text = [
                 f"Mode: Using Existing Vehicle",
-                f"Gates Completed: {self.controller.gates_completed}/{self.controller.target_gates}",
-                f"Mission Status: {'COMPLETED' if self.controller.all_gates_completed else 'IN PROGRESS'}",
+                f"Laps Completed: {self.controller.lap_counter.laps_completed}",
                 f"Blue Cones: {len([d for d in cone_detections if d.get('cls') == 1])}",
                 f"Yellow Cones: {len([d for d in cone_detections if d.get('cls') == 0])}",
-                f"Current Speed: {speed_stats['current']:.1f} m/s ({speed_stats['current']*3.6:.1f} km/h)",
-                f"Avg Speed: {speed_stats['average']:.1f} m/s ({speed_stats['average']*3.6:.1f} km/h)",
-                f"Max Speed: {speed_stats['max']:.1f} m/s ({speed_stats['max']*3.6:.1f} km/h)",
-                f"Distance: {self.controller.speed_logger.distance_traveled:.1f}m",
+                f"Orange Cones: {len([d for d in cone_detections if d.get('cls') == 2])}",
+                f"Current Speed: {current_speed:.1f} m/s ({current_speed*3.6:.1f} km/h)",
+                f"Distance: {self.controller.distance_traveled:.1f}m",
                 f"Steering: {self.controller.last_steering:.3f}",
-                f"Lost Track: {self.controller.lost_track_counter}",
-                f"Cooldown: {self.controller.cooldown_counter if self.controller.cooldown_counter > 0 else 'None'}"
+                f"Lost Track: {self.controller.lost_track_counter}"
             ]
             
             for i, text in enumerate(status_text):
                 y_pos = 50 + i*20  # Start lower to avoid vehicle info
-                color = (0, 255, 0) if not self.controller.all_gates_completed else (0, 255, 255)
+                color = (0, 255, 0)
                 if i == 0:  # Mode info
                     color = (255, 0, 255)  # Magenta for mode
-                elif i == 1:  # Gate counter
-                    color = (0, 255, 255) if self.controller.all_gates_completed else (255, 255, 0)
+                elif i == 1:  # Lap counter
+                    color = (0, 255, 0)  # Green for lap counter
                 elif i == 5:  # Current speed
                     color = (0, 255, 255)  # Cyan for current speed
-                elif i == 6:  # Average speed
-                    color = (255, 255, 0)  # Yellow for average speed
-                elif i == 7:  # Max speed
-                    color = (255, 0, 255)  # Magenta for max speed
-                elif i == 10:  # Lost track counter
+                elif i == 8:  # Lost track counter
                     color = (255, 0, 0) if self.controller.lost_track_counter > 10 else (0, 255, 0)
                 cv2.putText(viz_image, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
@@ -1351,9 +1251,9 @@ class CarlaGateRacingSystem:
             if not self.setup_camera_and_controller(model_path):
                 return False
             
-            print("System ready! Using existing vehicle for gate racing with robust control.")
+            print("System ready! Using existing vehicle for racing with lap counter.")
             print(f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id})")
-            print(f"Target: {self.controller.target_gates} gates")
+            print("🟠 Orange cones will be detected for lap counting")
             print("Press Ctrl+C to stop or 'q' in the display window")
             
             # Start threads
@@ -1394,12 +1294,9 @@ class CarlaGateRacingSystem:
             except:
                 pass
         
-        # Cleanup controller (including speed logger)
-        if self.controller:
-            try:
-                self.controller.cleanup()
-            except:
-                pass
+        # Print final lap count
+        if self.controller and hasattr(self.controller, 'lap_counter'):
+            print(f"🏁 Final lap count: {self.controller.lap_counter.laps_completed} laps completed")
         
         # Cleanup camera
         if self.camera:
@@ -1431,14 +1328,14 @@ def main():
         print(f"Using default YOLO model: {model_path}")
     
     # Create and run the robust racing system with existing vehicle
-    racing_system = CarlaGateRacingSystem()
+    racing_system = CarlaRacingSystem()
     
     try:
         success = racing_system.run(model_path)
         if success:
-            print("Robust gate racing system completed successfully")
+            print("Racing system with lap counter completed successfully")
         else:
-            print("Robust gate racing system failed to start")
+            print("Racing system with lap counter failed to start")
     except KeyboardInterrupt:
         print("\nReceived interrupt signal")
     except Exception as e:
