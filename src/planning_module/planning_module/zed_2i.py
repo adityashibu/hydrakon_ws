@@ -16,16 +16,28 @@ class Zed2iCamera:
         self.model_path = model_path
         self.use_ros2 = use_ros2
         
-        self.rgb_sensor = None
+        # Stereo camera sensors
+        self.left_rgb_sensor = None
+        self.right_rgb_sensor = None
         self.depth_sensor = None
-        self.rgb_image = None
+        
+        # Image data
+        self.left_rgb_image = None
+        self.right_rgb_image = None
+        self.rgb_image = None  # Main image (left camera for compatibility)
         self.depth_image = None
         self.cone_distances = []
         self.cone_detections = []
         
-        self.rgb_queue = queue.Queue(maxsize=1)
+        # Queues for stereo processing
+        self.left_rgb_queue = queue.Queue(maxsize=1)
+        self.right_rgb_queue = queue.Queue(maxsize=1)
+        self.rgb_queue = queue.Queue(maxsize=1)  # Keep for compatibility
         self.depth_queue = queue.Queue(maxsize=1)
         self.lock = threading.Lock()
+        
+        # ZED 2i specifications
+        self.baseline = 0.12  # 12cm baseline
         
         # External data from ROS2 (if enabled)
         self.ext_rgb_image = None
@@ -46,46 +58,117 @@ class Zed2iCamera:
         blueprint_library = self.world.get_blueprint_library()
         
         try:
+            print("Setting up ZED 2i stereo camera with 12cm baseline...")
             print("Available sensor blueprints:")
             for bp in blueprint_library.filter('sensor.*'):
                 print(bp.id)
             
-            rgb_bp = blueprint_library.find('sensor.camera.rgb')
-            if not rgb_bp:
+            # Base transform for camera mount
+            base_transform = carla.Transform(carla.Location(x=1.5, z=1.8))
+            
+            # === LEFT RGB CAMERA (ZED 2i Left Eye) ===
+            left_rgb_bp = blueprint_library.find('sensor.camera.rgb')
+            if not left_rgb_bp:
                 raise ValueError("RGB camera blueprint not found")
             
-            rgb_bp.set_attribute('image_size_x', str(self.resolution[0]))
-            rgb_bp.set_attribute('image_size_y', str(self.resolution[1]))
+            left_rgb_bp.set_attribute('image_size_x', str(self.resolution[0]))
+            left_rgb_bp.set_attribute('image_size_y', str(self.resolution[1]))
+            left_rgb_bp.set_attribute('fov', '110.0')  # ZED 2i 2.1mm lens FOV
             
-            rgb_transform = carla.Transform(carla.Location(x=1.5, z=1.8))
-            self.rgb_sensor = self.world.spawn_actor(rgb_bp, rgb_transform, attach_to=self.vehicle)
-            if not self.rgb_sensor.is_alive:
-                raise RuntimeError("RGB camera failed to spawn or is not alive")
-            self.rgb_sensor.listen(lambda image: self._process_rgb(image))
-            print("RGB camera spawned successfully")
+            # Left camera position (baseline/2 to the left)
+            left_transform = carla.Transform(
+                base_transform.location + carla.Location(x=0, y=-self.baseline/2, z=0),
+                base_transform.rotation
+            )
             
+            self.left_rgb_sensor = self.world.spawn_actor(left_rgb_bp, left_transform, attach_to=self.vehicle)
+            if not self.left_rgb_sensor.is_alive:
+                raise RuntimeError("Left RGB camera failed to spawn or is not alive")
+            self.left_rgb_sensor.listen(lambda image: self._process_left_rgb(image))
+            print(f"Left RGB camera spawned successfully at y={-self.baseline/2:.3f}m")
+            
+            # === RIGHT RGB CAMERA (ZED 2i Right Eye) ===
+            right_rgb_bp = blueprint_library.find('sensor.camera.rgb')
+            if not right_rgb_bp:
+                raise ValueError("RGB camera blueprint not found")
+            
+            right_rgb_bp.set_attribute('image_size_x', str(self.resolution[0]))
+            right_rgb_bp.set_attribute('image_size_y', str(self.resolution[1]))
+            right_rgb_bp.set_attribute('fov', '110.0')  # Match left camera
+            
+            # Right camera position (baseline/2 to the right)
+            right_transform = carla.Transform(
+                base_transform.location + carla.Location(x=0, y=self.baseline/2, z=0),
+                base_transform.rotation
+            )
+            
+            self.right_rgb_sensor = self.world.spawn_actor(right_rgb_bp, right_transform, attach_to=self.vehicle)
+            if not self.right_rgb_sensor.is_alive:
+                raise RuntimeError("Right RGB camera failed to spawn or is not alive")
+            self.right_rgb_sensor.listen(lambda image: self._process_right_rgb(image))
+            print(f"Right RGB camera spawned successfully at y={self.baseline/2:.3f}m")
+            
+            # === DEPTH CAMERA (Centered) ===
             depth_bp = blueprint_library.find('sensor.camera.depth')
             if not depth_bp:
                 raise ValueError("Depth camera blueprint not found")
             
             depth_bp.set_attribute('image_size_x', str(self.resolution[0]))
             depth_bp.set_attribute('image_size_y', str(self.resolution[1]))
+            depth_bp.set_attribute('fov', '110.0')  # Match stereo cameras
             
-            self.depth_sensor = self.world.spawn_actor(depth_bp, rgb_transform, attach_to=self.vehicle)
+            self.depth_sensor = self.world.spawn_actor(depth_bp, base_transform, attach_to=self.vehicle)
             if not self.depth_sensor.is_alive:
                 raise RuntimeError("Depth camera failed to spawn or is not alive")
             self.depth_sensor.listen(lambda image: self._process_depth(image))
-            print("Depth camera spawned successfully")
+            print("Depth camera spawned successfully at center position")
+            
+            print(f"ZED 2i stereo setup complete:")
+            print(f"  - Baseline: {self.baseline*100:.1f}cm ({self.baseline:.3f}m)")
+            print(f"  - FOV: 110° (2.1mm lens equivalent)")
+            print(f"  - Resolution: {self.resolution[0]}x{self.resolution[1]}")
+            print(f"  - Left camera offset: y={-self.baseline/2:.3f}m")
+            print(f"  - Right camera offset: y={+self.baseline/2:.3f}m")
             
             time.sleep(2.0)
             return True
+            
         except Exception as e:
-            print(f"Error setting up cameras: {e}")
+            print(f"Error setting up ZED 2i stereo cameras: {e}")
             import traceback
             traceback.print_exc()
             return False
     
+    def _process_left_rgb(self, image):
+        """Process left RGB camera image"""
+        try:
+            array = np.frombuffer(image.raw_data, dtype=np.uint8)
+            array = array.reshape((image.height, image.width, 4))
+            left_rgb_image = cv2.cvtColor(array, cv2.COLOR_BGRA2BGR)
+            
+            try:
+                self.left_rgb_queue.put_nowait(left_rgb_image)
+            except queue.Full:
+                pass
+        except Exception as e:
+            print(f"Error processing left RGB image: {e}")
+    
+    def _process_right_rgb(self, image):
+        """Process right RGB camera image"""
+        try:
+            array = np.frombuffer(image.raw_data, dtype=np.uint8)
+            array = array.reshape((image.height, image.width, 4))
+            right_rgb_image = cv2.cvtColor(array, cv2.COLOR_BGRA2BGR)
+            
+            try:
+                self.right_rgb_queue.put_nowait(right_rgb_image)
+            except queue.Full:
+                pass
+        except Exception as e:
+            print(f"Error processing right RGB image: {e}")
+    
     def _process_rgb(self, image):
+        """Legacy compatibility method"""
         try:
             array = np.frombuffer(image.raw_data, dtype=np.uint8)
             array = array.reshape((image.height, image.width, 4))
@@ -192,7 +275,7 @@ class Zed2iCamera:
                     
                     print(f"Detected object: Class ID = {cls}, Confidence = {conf:.2f}")
                     
-                    if (cls == 0 or cls == 1) and conf > 0.3:
+                    if cls in [0, 1, 2] and conf > 0.3:
                         center_x = (x1 + x2) // 2
                         bottom_y = min(y2, depth_array.shape[0] - 1)
                         
@@ -281,7 +364,12 @@ class Zed2iCamera:
                         self.cone_detections.append(detection)
                         
                         x1, y1, x2, y2 = cone['box']
-                        color = (0, 255, 0) if cone['cls'] == 0 else (255, 0, 0)
+                        color_map = {
+                            0: (0, 255, 255),
+                            1: (255, 0, 0),
+                            2: (0, 165, 255),
+                        }
+                        color = color_map.get(cone['cls'], (255, 255, 255))
                         cv2.rectangle(self.rgb_image, (x1, y1), (x2, y2), color, 2)
                         label = f"Cone: {final_depth:.2f}m"
                         cv2.putText(self.rgb_image, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
@@ -319,32 +407,69 @@ class Zed2iCamera:
 
     def process_frame(self):
         try:
-            rgb_available = False
+            left_available = False
+            right_available = False
             depth_available = False
             
-            if not self.rgb_queue.empty():
+            # Get left RGB image and set as main RGB for compatibility
+            if not self.left_rgb_queue.empty():
                 with self.lock:
-                    self.rgb_image = self.rgb_queue.get()
-                rgb_available = True
+                    self.left_rgb_image = self.left_rgb_queue.get()
+                    self.rgb_image = self.left_rgb_image  # Main image for processing
+                left_available = True
             
+            # Get right RGB image
+            if not self.right_rgb_queue.empty():
+                with self.lock:
+                    self.right_rgb_image = self.right_rgb_queue.get()
+                right_available = True
+            
+            # Get depth image
             if not self.depth_queue.empty():
                 with self.lock:
                     self.depth_image = self.depth_queue.get()
                 depth_available = True
             
-            if rgb_available and depth_available and self.yolo_model:
+            # Run YOLO on left camera image (main processing camera)
+            if left_available and depth_available and self.yolo_model:
                 # Lower confidence threshold to detect more cones
-                # The default was 0.25, let's try an even lower threshold
-                results = self.yolo_model(self.rgb_image, conf=0.2)
+                results = self.yolo_model(self.left_rgb_image, conf=0.2)
                 self._draw_detections(results)
+                
         except Exception as e:
-            print(f"Error processing frame: {e}")
+            print(f"Error processing stereo frame: {e}")
+    
+    def get_stereo_images(self):
+        """Get synchronized stereo pair images"""
+        with self.lock:
+            return self.left_rgb_image, self.right_rgb_image
+    
+    def get_baseline_info(self):
+        """Get stereo baseline information"""
+        return {
+            'baseline_meters': self.baseline,
+            'baseline_cm': self.baseline * 100,
+            'left_camera_offset': -self.baseline/2,
+            'right_camera_offset': self.baseline/2,
+            'fov_degrees': 110.0,
+            'focal_length_equivalent': '2.1mm'
+        }
     
     def shutdown(self):
-        if self.rgb_sensor:
-            self.rgb_sensor.stop()
-            self.rgb_sensor.destroy()
+        """Shutdown all cameras"""
+        if self.left_rgb_sensor:
+            self.left_rgb_sensor.stop()
+            self.left_rgb_sensor.destroy()
+            print("Left RGB camera destroyed")
+            
+        if self.right_rgb_sensor:
+            self.right_rgb_sensor.stop()
+            self.right_rgb_sensor.destroy()
+            print("Right RGB camera destroyed")
+            
         if self.depth_sensor:
             self.depth_sensor.stop()
             self.depth_sensor.destroy()
-        print("ZED 2i camera shut down")
+            print("Depth camera destroyed")
+            
+        print("ZED 2i stereo camera system shut down")

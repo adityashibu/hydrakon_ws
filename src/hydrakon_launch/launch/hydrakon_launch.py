@@ -151,31 +151,30 @@ def generate_launch_description():
                 )
             ]
         ),
-        TimerAction(
-            period=2.0,
-            actions=[
-                Node(
-                    package='zed2i_camera_sim',
-                    executable='zed_node',
-                    name='zed_camera_sim_node',
-                    output='screen',
-                    parameters=['config/zed_camera_params.yaml']
-                )
-            ]
-        ),
-
         # TimerAction(
-        #     period=5.0,  # Start after other systems are initialized
+        #     period=2.0,
         #     actions=[
         #         Node(
-        #             package='planning_module',
-        #             executable='planning_node',
-        #             name='planning_node',
+        #             package='zed2i_camera_sim',
+        #             executable='zed_node',
+        #             name='zed_camera_sim_node',
         #             output='screen',
-        #             parameters=['/home/aditya/hydrakon_ws/src/planning_module/config/planning_params.yaml']
+        #             parameters=['config/zed_camera_params.yaml']
         #         )
         #     ]
         # ),
+
+        TimerAction(
+            period=6.0,  # Start after EKF and other systems are ready
+            actions=[
+                Node(
+                    package='planning_module',
+                    executable='planning_node',
+                    name='planning_node',
+                    output='screen',
+                )
+            ]
+        ),
 
         # Node(
         #     package='rviz2',
