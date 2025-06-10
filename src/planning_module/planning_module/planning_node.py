@@ -200,6 +200,7 @@ class PurePursuitController(Node):
         self.gate_sequence = deque(maxlen=5)  # Track recent gates for turn prediction
         
         # Track following parameters
+        # Track following parameters
         self.track_width_min = 3.0  # Minimum track width (meters)
         self.track_width_max = 5.0  # Maximum track width (meters) - reduced
         self.max_depth_diff = 1.0   # Maximum depth difference between gate cones - reduced
@@ -559,6 +560,7 @@ class PurePursuitController(Node):
         steering_factor = 1.0 - 0.7 * abs(steering_angle)
         
         # Speed reduction when approaching targets
+        # Speed reduction when approaching targets
         if current_depth < 6.0:
             distance_factor = 0.7
         elif current_depth < 3.0:
@@ -597,9 +599,11 @@ class PurePursuitController(Node):
         """Process cone detections with strict spatial filtering to focus on immediate track"""
         if not cone_detections:
             return [], [], []
+            return [], [], []
             
         blue_cones = []    # Class 1 - LEFT side
         yellow_cones = []  # Class 0 - RIGHT side
+        orange_cones = []  # Class 2 - ORANGE (lap markers)
         orange_cones = []  # Class 2 - ORANGE (lap markers)
         
         try:
@@ -635,6 +639,13 @@ class PurePursuitController(Node):
                 else:  # Blue/Yellow cones - strict filtering
                     if depth < self.min_depth or depth > self.max_depth:
                         continue
+                # Filter by depth range - more lenient for orange cones
+                if cls == 2:  # Orange cone - allow farther detection
+                    if depth < 1.0 or depth > 15.0:
+                        continue
+                else:  # Blue/Yellow cones - strict filtering
+                    if depth < self.min_depth or depth > self.max_depth:
+                        continue
                     
                 center_x = (x1 + x2) / 2
                 center_y = (y1 + y2) / 2
@@ -649,9 +660,23 @@ class PurePursuitController(Node):
                 else:  # Blue/Yellow cones - strict filtering
                     if abs(world_x) > self.max_lateral_distance:
                         continue
+                # CRITICAL: Filter by lateral distance - more lenient for orange cones
+                if cls == 2:  # Orange cone - allow wider lateral range
+                    if abs(world_x) > 8.0:  # Wider range for orange cones
+                        continue
+                else:  # Blue/Yellow cones - strict filtering
+                    if abs(world_x) > self.max_lateral_distance:
+                        continue
                 
                 # CRITICAL: Filter by forward focus angle - more lenient for orange cones
+                # CRITICAL: Filter by forward focus angle - more lenient for orange cones
                 angle_to_cone = np.degrees(abs(np.arctan2(world_x, world_y)))
+                if cls == 2:  # Orange cone - allow wider angle
+                    if angle_to_cone > 60.0:  # Wider angle for orange cones
+                        continue
+                else:  # Blue/Yellow cones - strict filtering
+                    if angle_to_cone > self.forward_focus_angle:
+                        continue
                 if cls == 2:  # Orange cone - allow wider angle
                     if angle_to_cone > 60.0:  # Wider angle for orange cones
                         continue
@@ -661,6 +686,7 @@ class PurePursuitController(Node):
                 
                 # Only consider cones that are reasonably positioned for track boundaries
                 # Blue cones should be on the left (negative x), yellow on the right (positive x)
+                # Orange cones can be anywhere (lap markers)
                 # Orange cones can be anywhere (lap markers)
                 if cls == 1 and world_x > 1.0:  # Blue cone too far right
                     continue
@@ -684,17 +710,22 @@ class PurePursuitController(Node):
                     yellow_cones.append(cone_data)
                 elif cls == 2:  # Orange cone - LAP MARKER
                     orange_cones.append(cone_data)
+                elif cls == 2:  # Orange cone - LAP MARKER
+                    orange_cones.append(cone_data)
                     
         except Exception as e:
             print(f"ERROR processing cone detections: {e}")
+            return [], [], []
             return [], [], []
         
         # Sort by depth (closest first), then by angle (most centered first)
         blue_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
         yellow_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
         orange_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
+        orange_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
         
         # Debug filtered cones
+        print(f"DEBUG: After spatial filtering - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
         print(f"DEBUG: After spatial filtering - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
         if blue_cones:
             closest_blue = blue_cones[0]
@@ -705,7 +736,11 @@ class PurePursuitController(Node):
         if orange_cones:
             closest_orange = orange_cones[0]
             print(f"  Closest orange: x={closest_orange['x']:.2f}, y={closest_orange['y']:.2f}, angle={closest_orange['angle_from_center']:.1f}°")
+        if orange_cones:
+            closest_orange = orange_cones[0]
+            print(f"  Closest orange: x={closest_orange['x']:.2f}, y={closest_orange['y']:.2f}, angle={closest_orange['angle_from_center']:.1f}°")
         
+        return blue_cones, yellow_cones, orange_cones
         return blue_cones, yellow_cones, orange_cones
     
     def is_valid_track_segment(self, blue, yellow):
@@ -743,16 +778,21 @@ class PurePursuitController(Node):
     
     def find_best_track_segment(self, blue_cones, yellow_cones):
         """Find the best immediate track segment with strict proximity focus"""
+    def find_best_track_segment(self, blue_cones, yellow_cones):
+        """Find the best immediate track segment with strict proximity focus"""
         if not blue_cones or not yellow_cones:
+            print(f"DEBUG: Cannot form track segment - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
             print(f"DEBUG: Cannot form track segment - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
             return None
             
+        print(f"DEBUG: Finding immediate track segment from {len(blue_cones)} blue and {len(yellow_cones)} yellow cones")
         print(f"DEBUG: Finding immediate track segment from {len(blue_cones)} blue and {len(yellow_cones)} yellow cones")
         
         # Only consider the closest 3 cones of each color to focus on immediate track
         blue_candidates = blue_cones[:3]
         yellow_candidates = yellow_cones[:3]
         
+        valid_segments = []
         valid_segments = []
         
         try:
@@ -762,6 +802,8 @@ class PurePursuitController(Node):
                     if not self.is_valid_track_segment(blue, yellow):
                         continue
                     
+                    # Create track segment
+                    segment = {
                     # Create track segment
                     segment = {
                         'blue': blue,
@@ -776,7 +818,12 @@ class PurePursuitController(Node):
                     # Additional validation: segment should be roughly centered in front of vehicle
                     if abs(segment['midpoint_x']) < 2.0:  # Segment center within 2m of vehicle centerline
                         valid_segments.append(segment)
+                    # Additional validation: segment should be roughly centered in front of vehicle
+                    if abs(segment['midpoint_x']) < 2.0:  # Segment center within 2m of vehicle centerline
+                        valid_segments.append(segment)
             
+            if not valid_segments:
+                print("DEBUG: No valid immediate track segments found")
             if not valid_segments:
                 print("DEBUG: No valid immediate track segments found")
                 return None
@@ -785,8 +832,13 @@ class PurePursuitController(Node):
             def segment_score(s):
                 distance_score = s['avg_depth']
                 centerline_score = abs(s['midpoint_x']) * 3.0  # Heavy penalty for off-center segments
+            def segment_score(s):
+                distance_score = s['avg_depth']
+                centerline_score = abs(s['midpoint_x']) * 3.0  # Heavy penalty for off-center segments
                 return distance_score + centerline_score
             
+            valid_segments.sort(key=segment_score)
+            best_segment = valid_segments[0]
             valid_segments.sort(key=segment_score)
             best_segment = valid_segments[0]
             
@@ -796,14 +848,23 @@ class PurePursuitController(Node):
             print(f"  Segment midpoint: x={best_segment['midpoint_x']:6.2f}, y={best_segment['midpoint_y']:6.2f}")
             print(f"  Segment width: {best_segment['width']:.2f}m, Average depth: {best_segment['avg_depth']:.2f}m")
             print(f"  Centerline offset: {abs(best_segment['midpoint_x']):.2f}m")
+            print(f"DEBUG: Found immediate track segment:")
+            print(f"  Blue cone (LEFT):  x={best_segment['blue']['x']:6.2f}, y={best_segment['blue']['y']:6.2f}")
+            print(f"  Yellow cone (RIGHT): x={best_segment['yellow']['x']:6.2f}, y={best_segment['yellow']['y']:6.2f}")
+            print(f"  Segment midpoint: x={best_segment['midpoint_x']:6.2f}, y={best_segment['midpoint_y']:6.2f}")
+            print(f"  Segment width: {best_segment['width']:.2f}m, Average depth: {best_segment['avg_depth']:.2f}m")
+            print(f"  Centerline offset: {abs(best_segment['midpoint_x']):.2f}m")
             
+            return best_segment
             return best_segment
             
         except Exception as e:
             print(f"ERROR in track segment finding: {e}")
+            print(f"ERROR in track segment finding: {e}")
             return None
     
     def follow_cone_line(self, blue_cones, yellow_cones):
+        """Fallback: follow immediate cones when no track segments can be formed"""
         """Fallback: follow immediate cones when no track segments can be formed"""
         # Only consider the closest cones that are directly ahead
         immediate_cones = []
@@ -1053,6 +1114,18 @@ class PurePursuitController(Node):
                 transform = self.vehicle.get_transform()
                 vehicle_position = (transform.location.x, transform.location.y, transform.location.z)
                 self.lap_counter.check_orange_gate_passage(orange_cones, vehicle_position)
+            # Update distance traveled
+            self.update_distance_traveled()
+            
+            # Process cone detections (includes orange cones)
+            blue_cones, yellow_cones, orange_cones = self.process_cone_detections(cone_detections)
+            print(f"DEBUG: Processed cones - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
+            
+            # Check for lap completion through orange gate
+            if orange_cones:
+                transform = self.vehicle.get_transform()
+                vehicle_position = (transform.location.x, transform.location.y, transform.location.z)
+                self.lap_counter.check_orange_gate_passage(orange_cones, vehicle_position)
             
             # NEW: Enhanced lost track detection with recovery planning
             if len(blue_cones) == 0 and len(yellow_cones) == 0:
@@ -1115,12 +1188,18 @@ class PurePursuitController(Node):
             
             # Try to find a track segment
             track_segment = self.find_best_track_segment(blue_cones, yellow_cones)
+            # Try to find a track segment
+            track_segment = self.find_best_track_segment(blue_cones, yellow_cones)
             
+            # If no track segment found, try cone line following
+            if not track_segment and (blue_cones or yellow_cones):
+                track_segment = self.follow_cone_line(blue_cones, yellow_cones)
             # If no track segment found, try cone line following
             if not track_segment and (blue_cones or yellow_cones):
                 track_segment = self.follow_cone_line(blue_cones, yellow_cones)
                 print("DEBUG: Using cone line following")
             
+            if not track_segment:
             if not track_segment:
                 self.lost_track_counter += 1
                 self.planning_state['track_confidence'] = 0.3
@@ -1169,11 +1248,14 @@ class PurePursuitController(Node):
             
             # Detect turn type and calculate path widening
             turn_type, turn_direction, path_offset = self.detect_turn_type(track_segment, blue_cones, yellow_cones)
+            turn_type, turn_direction, path_offset = self.detect_turn_type(track_segment, blue_cones, yellow_cones)
             self.current_turn_type = turn_type
             self.turn_direction = turn_direction
             self.path_offset = path_offset
             
             # Adjust target point for wider turns
+            original_target_x = track_segment['midpoint_x']
+            original_target_y = track_segment['midpoint_y']
             original_target_x = track_segment['midpoint_x']
             original_target_y = track_segment['midpoint_y']
             
@@ -1444,6 +1526,9 @@ class CarlaRacingSystem(Node):
                 blue_cones, yellow_cones, orange_cones = self.controller.process_cone_detections(cone_detections)
                 
                 # Try to find current target
+                track_segment = self.controller.find_best_track_segment(blue_cones, yellow_cones)
+                if not track_segment and (blue_cones or yellow_cones):
+                    track_segment = self.controller.follow_cone_line(blue_cones, yellow_cones)
                 track_segment = self.controller.find_best_track_segment(blue_cones, yellow_cones)
                 if not track_segment and (blue_cones or yellow_cones):
                     track_segment = self.controller.follow_cone_line(blue_cones, yellow_cones)
