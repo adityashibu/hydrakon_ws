@@ -1,3 +1,8 @@
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float64, Bool
+from sensor_msgs.msg import Imu
+from geometry_msgs.msg import Twist
 import carla
 import numpy as np
 import cv2
@@ -5,174 +10,171 @@ import time
 import threading
 import signal
 import sys
-import csv
-import os
-from datetime import datetime
 from collections import deque
 from .zed_2i import Zed2iCamera
 
-class SpeedLogger:
-    def __init__(self, log_dir="speed_logs"):
-        self.log_dir = log_dir
-        self.log_file = None
-        self.csv_writer = None
-        self.session_start_time = None
-        self.speed_history = deque(maxlen=100)  # Keep last 100 speed readings
-        self.distance_traveled = 0.0
-        self.last_position = None
+class LapCounter:
+    def __init__(self):
+        self.laps_completed = 0
+        self.last_orange_gate_time = 0
+        self.cooldown_duration = 3.0  # 3 seconds cooldown between lap counts
+        self.orange_gate_passed_threshold = 2.0  # Distance threshold for passing through orange gate
         
-        # Create log directory if it doesn't exist
-        os.makedirs(log_dir, exist_ok=True)
+    def check_orange_gate_passage(self, orange_cones, vehicle_position):
+        """Check if vehicle has passed between two orange cones"""
+        current_time = time.time()
         
-        # Initialize log file
-        self.init_log_file()
+        # Cooldown check to prevent multiple counts for same gate
+        if current_time - self.last_orange_gate_time < self.cooldown_duration:
+            return False
+        
+        # Check single orange cone or pair
+        if len(orange_cones) < 1:
+            return False
+        
+        # Find the closest orange gate (pair of orange cones) or single cone
+        best_gate = self.find_closest_orange_gate(orange_cones)
+        
+        if not best_gate:
+            # If no gate found, try single closest orange cone
+            if len(orange_cones) >= 1:
+                closest_orange = min(orange_cones, key=lambda c: c['depth'])
+                if closest_orange['depth'] < 3.0:  # Very close to single orange cone
+                    self.laps_completed += 1
+                    self.last_orange_gate_time = current_time
+                    print(f"🏁 LAP {self.laps_completed} COMPLETED! Passed single orange cone!")
+                    return True
+            return False
+        
+        # Check if vehicle is close enough to the gate center
+        gate_center_x = best_gate['midpoint_x']
+        gate_center_y = best_gate['midpoint_y']
+        
+        # Convert to vehicle-relative coordinates for distance check
+        distance_to_gate = np.sqrt(gate_center_x**2 + gate_center_y**2)
+        
+        print(f"DEBUG: Orange gate distance: {distance_to_gate:.2f}m, threshold: {self.orange_gate_passed_threshold:.2f}m")
+        print(f"DEBUG: Gate center: ({gate_center_x:.2f}, {gate_center_y:.2f})")
+        
+        if distance_to_gate < self.orange_gate_passed_threshold:
+            self.laps_completed += 1
+            self.last_orange_gate_time = current_time
+            print(f"🏁 LAP {self.laps_completed} COMPLETED! Passed through orange gate!")
+            return True
+        
+        return False
     
-    def init_log_file(self):
-        """Initialize CSV log file with headers"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = f"speed_log_{timestamp}.csv"
-        self.log_file_path = os.path.join(self.log_dir, log_filename)
+    def find_closest_orange_gate(self, orange_cones):
+        """Find the closest valid orange gate (pair of orange cones)"""
+        if len(orange_cones) < 2:
+            return None
         
-        self.log_file = open(self.log_file_path, 'w', newline='')
-        self.csv_writer = csv.writer(self.log_file)
+        # Sort orange cones by depth (closest first)
+        orange_cones.sort(key=lambda c: c['depth'])
         
-        # Write CSV headers
-        headers = [
-            'timestamp',
-            'elapsed_time',
-            'speed_mps',
-            'speed_kmh',
-            'speed_mph',
-            'target_speed',
-            'throttle',
-            'brake',
-            'steering',
-            'position_x',
-            'position_y',
-            'position_z',
-            'distance_traveled',
-            'gates_completed',
-            'navigation_type'
-        ]
-        self.csv_writer.writerow(headers)
-        self.log_file.flush()
-        
-        self.session_start_time = time.time()
-        print(f"Speed logger initialized: {self.log_file_path}")
-    
-    def log_speed_data(self, vehicle, target_speed, throttle, brake, steering, 
-                      gates_completed, navigation_type="unknown"):
-        """Log current speed and vehicle data"""
-        try:
-            # Get current time
-            current_time = time.time()
-            elapsed_time = current_time - self.session_start_time
-            
-            # Get vehicle velocity and position
-            velocity = vehicle.get_velocity()
-            transform = vehicle.get_transform()
-            location = transform.location
-            
-            # Calculate current speed (m/s)
-            current_speed_mps = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
-            
-            # Convert to other units
-            current_speed_kmh = current_speed_mps * 3.6
-            current_speed_mph = current_speed_mps * 2.237
-            
-            # Calculate distance traveled
-            if self.last_position is not None:
-                distance_delta = np.sqrt(
-                    (location.x - self.last_position.x)**2 + 
-                    (location.y - self.last_position.y)**2 + 
-                    (location.z - self.last_position.z)**2
-                )
-                self.distance_traveled += distance_delta
-            
-            self.last_position = location
-            
-            # Add to speed history
-            self.speed_history.append(current_speed_mps)
-            
-            # Write to CSV
-            row_data = [
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],  # timestamp with milliseconds
-                f"{elapsed_time:.3f}",
-                f"{current_speed_mps:.3f}",
-                f"{current_speed_kmh:.3f}",
-                f"{current_speed_mph:.3f}",
-                f"{target_speed:.3f}",
-                f"{throttle:.3f}",
-                f"{brake:.3f}",
-                f"{steering:.3f}",
-                f"{location.x:.3f}",
-                f"{location.y:.3f}",
-                f"{location.z:.3f}",
-                f"{self.distance_traveled:.3f}",
-                gates_completed,
-                navigation_type
-            ]
-            
-            self.csv_writer.writerow(row_data)
-            self.log_file.flush()  # Ensure data is written immediately
-            
-        except Exception as e:
-            print(f"Error logging speed data: {e}")
-    
-    def get_speed_stats(self):
-        """Get current speed statistics"""
-        if not self.speed_history:
-            return {
-                'current': 0.0,
-                'average': 0.0,
-                'max': 0.0,
-                'min': 0.0
-            }
-        
-        speeds = list(self.speed_history)
-        return {
-            'current': speeds[-1],
-            'average': np.mean(speeds),
-            'max': np.max(speeds),
-            'min': np.min(speeds)
-        }
-    
-    def close(self):
-        """Close the log file and print summary"""
-        if self.log_file:
-            try:
-                # Write summary at the end
-                stats = self.get_speed_stats()
-                elapsed_time = time.time() - self.session_start_time
+        # Try to pair cones to form a gate
+        for i in range(len(orange_cones)):
+            for j in range(i + 1, len(orange_cones)):
+                cone1 = orange_cones[i]
+                cone2 = orange_cones[j]
                 
-                print(f"\n{'='*50}")
-                print("SPEED LOGGING SESSION SUMMARY")
-                print(f"{'='*50}")
-                print(f"Log file: {self.log_file_path}")
-                print(f"Session duration: {elapsed_time:.1f} seconds")
-                print(f"Distance traveled: {self.distance_traveled:.2f} meters")
-                print(f"Average speed: {stats['average']:.2f} m/s ({stats['average']*3.6:.2f} km/h)")
-                print(f"Maximum speed: {stats['max']:.2f} m/s ({stats['max']*3.6:.2f} km/h)")
-                print(f"Minimum speed: {stats['min']:.2f} m/s ({stats['min']*3.6:.2f} km/h)")
-                print(f"Speed readings: {len(self.speed_history)}")
-                print(f"{'='*50}")
-                
-                self.log_file.close()
-                self.log_file = None
-                
-            except Exception as e:
-                print(f"Error closing speed logger: {e}")
+                # Check if cones can form a valid gate
+                if self.is_valid_orange_gate(cone1, cone2):
+                    gate = {
+                        'cone1': cone1,
+                        'cone2': cone2,
+                        'midpoint_x': (cone1['x'] + cone2['x']) / 2,
+                        'midpoint_y': (cone1['y'] + cone2['y']) / 2,
+                        'width': abs(cone1['x'] - cone2['x']),
+                        'avg_depth': (cone1['depth'] + cone2['depth']) / 2
+                    }
+                    print(f"DEBUG: Found orange gate - Width: {gate['width']:.2f}m, Depth: {gate['avg_depth']:.2f}m")
+                    return gate
+        
+        return None
+    
+    def is_valid_orange_gate(self, cone1, cone2):
+        """Check if two orange cones can form a valid gate"""
+        # Check depth similarity
+        depth_diff = abs(cone1['depth'] - cone2['depth'])
+        if depth_diff > 3.0:  # More lenient for orange cones
+            print(f"DEBUG: Orange gate rejected - depth diff: {depth_diff:.2f}m")
+            return False
+        
+        # Check gate width (should be reasonable for a lap marker)
+        width = abs(cone1['x'] - cone2['x'])
+        if width < 1.5 or width > 12.0:  # More lenient width range
+            print(f"DEBUG: Orange gate rejected - width: {width:.2f}m")
+            return False
+        
+        # Check if gate is close enough
+        avg_depth = (cone1['depth'] + cone2['depth']) / 2
+        if avg_depth > 15.0:  # Allow farther orange gates
+            print(f"DEBUG: Orange gate rejected - too far: {avg_depth:.2f}m")
+            return False
+        
+        print(f"DEBUG: Valid orange gate found - Width: {width:.2f}m, Depth: {avg_depth:.2f}m")
+        return True
 
-
-class PurePursuitController:
+class PurePursuitController(Node):
     def __init__(self, vehicle, lookahead_distance=4.0):
-        self.vehicle = vehicle
-        self.lookahead_distance = lookahead_distance
+        super().__init__('carla_racing_controller')
         
-        # Vehicle parameters
-        self.wheelbase = 2.7  # meters
-        self.max_speed = 8.0  # m/s
-        self.min_speed = 2.0  # m/s
+        # Store vehicle reference (for position/velocity sensing only, NO CONTROL)
+        self.vehicle = vehicle
+        
+        # Declare ROS2 parameters
+        self.declare_parameter('max_speed', 8.0)
+        self.declare_parameter('min_speed', 2.0)
+        self.declare_parameter('wheelbase', 2.7)
+        self.declare_parameter('lookahead_distance', lookahead_distance)
+        self.declare_parameter('control_frequency', 20.0)
+        self.declare_parameter('pid_enabled', True)
+        self.declare_parameter('show_visualization', True)
+        
+        # Physics-based constraint parameters (loosened for PID)
+        self.declare_parameter('physics_constraints_enabled', False)
+        self.declare_parameter('max_steering_at_speed', False)
+        self.declare_parameter('coordinated_speed_steering', False)
+        
+        # Get parameters
+        self.max_speed = self.get_parameter('max_speed').value
+        self.min_speed = self.get_parameter('min_speed').value
+        self.wheelbase = self.get_parameter('wheelbase').value
+        self.lookahead_distance = self.get_parameter('lookahead_distance').value
+        self.control_frequency = self.get_parameter('control_frequency').value
+        self.pid_enabled = self.get_parameter('pid_enabled').value
+        self.show_visualization = self.get_parameter('show_visualization').value
+        
+        # Physics constraint parameters
+        self.physics_constraints_enabled = self.get_parameter('physics_constraints_enabled').value
+        self.max_steering_at_speed = self.get_parameter('max_steering_at_speed').value
+        self.coordinated_speed_steering = self.get_parameter('coordinated_speed_steering').value
+        
+        # ROS2 Publishers - Commands to Control Module (NO CARLA CONTROL)
+        self.target_speed_pub = self.create_publisher(Float64, '/target_speed', 10)
+        self.target_steering_pub = self.create_publisher(Float64, '/target_steering', 10)
+        
+        # Publishers for PID information (one-way communication TO PID)
+        self.path_curvature_pub = self.create_publisher(Float64, '/path_curvature', 10)
+        self.lookahead_distance_pub = self.create_publisher(Float64, '/current_lookahead', 10)
+        self.turn_type_pub = self.create_publisher(Float64, '/turn_type', 10)  # 0=straight, 1=gentle, 2=sharp, 3=u_turn
+        
+        # ROS2 Subscribers - Get current state for situational awareness only
+        self.current_speed_sub = self.create_subscription(
+            Float64, '/current_speed', self.current_speed_callback, 10)
+        self.imu_sub = self.create_subscription(
+            Imu, '/carla/imu_sensor', self.imu_callback, 10)
+        
+        # Planning state (for situational awareness only, no PID feedback)
+        self.current_speed = 0.0
+        self.current_imu_data = None
+        
+        # Physics-based constraints tracking (loosened)
+        self.last_physics_warning_time = 0.0
+        self.physics_warning_interval = 2.0  # Less frequent warnings
+        self.consecutive_sharp_turns = 0
+        self.max_consecutive_sharp_turns = 5  # More lenient
         
         # Control parameters - much more restrictive
         self.safety_offset = 0.5  # meters from cones
@@ -190,7 +192,6 @@ class PurePursuitController:
         # State tracking
         self.last_steering = 0.0
         self.steering_history = deque(maxlen=5)
-        self.all_gates_completed = False
         
         # NEW: Turn state tracking
         self.current_turn_type = "straight"  # "straight", "gentle", "sharp", "u_turn"
@@ -198,33 +199,191 @@ class PurePursuitController:
         self.path_offset = 0.0  # Current path offset for wider turns
         self.gate_sequence = deque(maxlen=5)  # Track recent gates for turn prediction
         
-        # Gate tracking
-        self.gates_completed = 0
-        self.target_gates = 3  # Number of gates to complete
-        self.current_gate = None
-        self.previous_gate = None
-        self.gate_passed_threshold = 2.0  # Distance threshold for passing through gate
-        self.cooldown_counter = 0
-        self.cooldown_duration = 15  # Frames to wait after passing a gate
-        
-        # Much more restrictive track following parameters
+        # Track following parameters
         self.track_width_min = 3.0  # Minimum track width (meters)
         self.track_width_max = 5.0  # Maximum track width (meters) - reduced
         self.max_depth_diff = 1.0   # Maximum depth difference between gate cones - reduced
         self.max_lateral_jump = 1.5 # Maximum lateral movement between consecutive gates - reduced
         self.forward_focus_angle = 30.0  # Only consider cones within this angle (degrees) from vehicle heading
         
-        # Gate validation - simplified
-        self.gate_history = deque(maxlen=3)
-        self.required_consecutive_gates = 2  # Reduced for faster response
-        self.consecutive_valid_gates = 0
-        
         # Backup navigation when no gates found
         self.lost_track_counter = 0
         self.max_lost_track_frames = 20
         
-        # Initialize speed logger
-        self.speed_logger = SpeedLogger()
+        # Distance tracking for basic stats
+        self.distance_traveled = 0.0
+        self.last_position = None
+        
+        # Initialize lap counter
+        self.lap_counter = LapCounter()
+        
+        # Planning state for information sharing (from first node)
+        self.planning_state = {
+            'target_speed': self.min_speed,
+            'target_steering': 0.0,
+            'path_curvature': 0.0,
+            'current_lookahead': self.lookahead_distance,
+            'turn_type_numeric': 0.0,  # 0=straight, 1=gentle, 2=sharp, 3=u_turn
+            'cone_visibility_risk': 0.0,  # 0=low, 1=moderate, 2=high
+            'track_confidence': 1.0  # 0-1, how confident we are in the current path
+        }
+        
+        # Store current target for visibility calculations
+        self.current_target_x = 0.0
+        self.current_target_y = 0.0
+        
+        self.get_logger().info("CARLA Racing Controller Node initialized with ROS2 interface")
+        self.get_logger().info("🚫 NO DIRECT CARLA CONTROL - Publishing ROS2 topics only")
+        self.get_logger().info(f"PID Information Publishing: {'ENABLED' if self.pid_enabled else 'DISABLED'}")
+        self.get_logger().info(f"Physics Constraints: {'ENABLED' if self.physics_constraints_enabled else 'DISABLED'}")
+        self.get_logger().info(f"Control frequency: {self.control_frequency} Hz")
+    
+    def current_speed_callback(self, msg):
+        """Receive current speed for situational awareness only"""
+        self.current_speed = msg.data
+    
+    def imu_callback(self, msg):
+        """Store IMU data for planning calculations"""
+        self.current_imu_data = msg
+    
+    def apply_physics_constraints(self, raw_speed, raw_steering):
+        """Apply loosened physics-based constraints (since PID already has constraints)"""
+        if not self.physics_constraints_enabled:
+            return raw_speed, raw_steering
+        
+        try:
+            constrained_speed = raw_speed
+            constrained_steering = raw_steering
+            current_time = time.time()
+            
+            # CONSTRAINT 1: Speed-dependent steering limits (loosened)
+            if self.max_steering_at_speed:
+                if self.current_speed > 4.0:  # Higher threshold for high speed
+                    max_steering = 0.4  # More lenient at high speed
+                elif self.current_speed > 2.0:  # Higher threshold for medium speed  
+                    max_steering = 0.7  # More lenient at medium speed
+                else:  # Low speed
+                    max_steering = 1.0  # Full steering at low speed
+                
+                if abs(raw_steering) > max_steering:
+                    constrained_steering = np.clip(raw_steering, -max_steering, max_steering)
+                    
+                    # Log warning (but not too frequently)
+                    if current_time - self.last_physics_warning_time > self.physics_warning_interval:
+                        self.get_logger().warn(f"PHYSICS: Steering limited for speed {self.current_speed:.1f}m/s: {raw_steering:.3f} -> {constrained_steering:.3f}")
+                        self.last_physics_warning_time = current_time
+            
+            # CONSTRAINT 2: Coordinated speed-steering commands (loosened)
+            if self.coordinated_speed_steering:
+                # If we need to make a sharp turn, reduce speed first
+                if abs(raw_steering) > 0.6:  # Higher threshold for speed reduction
+                    # Reduce speed for sharp turns
+                    max_speed_for_turn = 3.0 - (abs(raw_steering) - 0.6) * 2.5  # More lenient relationship
+                    max_speed_for_turn = max(max_speed_for_turn, self.min_speed * 0.8)  # Higher minimum
+                    
+                    if constrained_speed > max_speed_for_turn:
+                        constrained_speed = max_speed_for_turn
+                        
+                        # Track consecutive sharp turns
+                        self.consecutive_sharp_turns += 1
+                        
+                        if current_time - self.last_physics_warning_time > self.physics_warning_interval:
+                            self.get_logger().warn(f"PHYSICS: Speed reduced for sharp turn: {raw_speed:.2f} -> {constrained_speed:.2f} (steering: {raw_steering:.3f})")
+                            self.last_physics_warning_time = current_time
+                else:
+                    # Reset consecutive sharp turn counter
+                    self.consecutive_sharp_turns = 0
+            
+            # CONSTRAINT 3: Prevent excessive consecutive sharp turns (loosened)
+            if self.consecutive_sharp_turns > self.max_consecutive_sharp_turns:
+                # Force a gentler approach
+                constrained_steering = constrained_steering * 0.8  # Less aggressive reduction
+                constrained_speed = min(constrained_speed, self.min_speed * 1.5)  # Higher minimum speed
+                
+                if current_time - self.last_physics_warning_time > self.physics_warning_interval:
+                    self.get_logger().warn(f"PHYSICS: Gentler approach forced after {self.consecutive_sharp_turns} consecutive sharp turns")
+                    self.last_physics_warning_time = current_time
+            
+            # CONSTRAINT 4: Rate limiting for steering changes (loosened)
+            max_steering_change = 0.3  # Higher maximum change per planning cycle
+            if hasattr(self, 'last_constrained_steering'):
+                steering_change = constrained_steering - self.last_constrained_steering
+                if abs(steering_change) > max_steering_change:
+                    if steering_change > 0:
+                        constrained_steering = self.last_constrained_steering + max_steering_change
+                    else:
+                        constrained_steering = self.last_constrained_steering - max_steering_change
+                    
+                    if current_time - self.last_physics_warning_time > self.physics_warning_interval:
+                        self.get_logger().warn(f"PHYSICS: Steering rate limited: change {steering_change:.3f} -> {max_steering_change:.3f}")
+                        self.last_physics_warning_time = current_time
+            
+            # Store for next iteration
+            self.last_constrained_steering = constrained_steering
+            
+            # CONSTRAINT 5: Emergency coordination (loosened)
+            speed_for_steering = 2.5 + (1.0 - abs(constrained_steering)) * 5.0  # More speed allowed
+            if self.current_speed > speed_for_steering + 1.5:  # Higher tolerance
+                # Emergency speed reduction
+                constrained_speed = min(constrained_speed, speed_for_steering)
+                
+                if current_time - self.last_physics_warning_time > self.physics_warning_interval:
+                    self.get_logger().warn(f"PHYSICS: Emergency speed coordination: speed {self.current_speed:.1f} too high for steering {constrained_steering:.3f}")
+                    self.last_physics_warning_time = current_time
+            
+            return constrained_speed, constrained_steering
+            
+        except Exception as e:
+            self.get_logger().error(f"Error in physics constraints: {e}")
+            return raw_speed, raw_steering
+    
+    def publish_control_targets(self, target_speed, target_steering):
+        """Publish control targets to PID controllers (NO CARLA CONTROL)"""
+        speed_msg = Float64()
+        speed_msg.data = float(target_speed)
+        self.target_speed_pub.publish(speed_msg)
+        
+        steering_msg = Float64()
+        steering_msg.data = float(target_steering)
+        self.target_steering_pub.publish(steering_msg)
+    
+    def publish_planning_state(self):
+        """Publish additional planning state for PID information"""
+        if not self.pid_enabled:
+            return
+            
+        # Publish path curvature
+        curvature_msg = Float64()
+        curvature_msg.data = float(self.planning_state['path_curvature'])
+        self.path_curvature_pub.publish(curvature_msg)
+        
+        # Publish current lookahead distance
+        lookahead_msg = Float64()
+        lookahead_msg.data = float(self.planning_state['current_lookahead'])
+        self.lookahead_distance_pub.publish(lookahead_msg)
+        
+        # Publish turn type
+        turn_msg = Float64()
+        turn_msg.data = float(self.planning_state['turn_type_numeric'])
+        self.turn_type_pub.publish(turn_msg)
+    
+    def calculate_path_curvature(self, target_x, target_y):
+        """Calculate path curvature for PID controller information"""
+        try:
+            # Calculate curvature based on steering geometry
+            lookahead_dist = np.sqrt(target_x**2 + target_y**2)
+            if lookahead_dist < 0.1:
+                return 0.0
+            
+            # Simple curvature calculation: curvature = 2 * sin(alpha) / lookahead
+            alpha = np.arctan2(target_x, target_y)
+            curvature = 2.0 * np.sin(alpha) / lookahead_dist
+            
+            return float(curvature)
+            
+        except Exception as e:
+            self.get_logger().error(f"Error calculating path curvature: {e}")
+            return 0.0
     
     def detect_turn_type(self, current_gate, blue_cones, yellow_cones):
         """Detect the type of turn and calculate appropriate path widening"""
@@ -261,23 +420,27 @@ class PurePursuitController:
             # Look ahead for upcoming turns by analyzing cone distribution
             upcoming_turn_severity = self.analyze_upcoming_turn(blue_cones, yellow_cones)
             
-            # Determine turn type and direction
+            # Determine turn type and direction with updated planning state
             if abs_angle < 10 and upcoming_turn_severity < 20:
                 turn_type = "straight"
                 direction = "none"
                 path_offset = 0.0
+                self.planning_state['turn_type_numeric'] = 0.0
             elif abs_angle < self.sharp_turn_threshold and upcoming_turn_severity < 40:
                 turn_type = "gentle"
                 direction = "left" if angle_change > 0 else "right"
                 path_offset = 0.3 * self.path_widening_factor
+                self.planning_state['turn_type_numeric'] = 1.0
             elif abs_angle < self.u_turn_threshold and upcoming_turn_severity < 70:
                 turn_type = "sharp"
                 direction = "left" if angle_change > 0 else "right"
                 path_offset = 0.6 * self.path_widening_factor
+                self.planning_state['turn_type_numeric'] = 2.0
             else:
                 turn_type = "u_turn"
                 direction = "left" if angle_change > 0 else "right"
                 path_offset = 1.0 * self.path_widening_factor
+                self.planning_state['turn_type_numeric'] = 3.0
             
             print(f"DEBUG: Turn analysis - Type: {turn_type}, Direction: {direction}, Angle change: {angle_change:.1f}°, Upcoming severity: {upcoming_turn_severity:.1f}°")
             
@@ -395,7 +558,7 @@ class PurePursuitController:
         # Additional speed reduction based on steering angle
         steering_factor = 1.0 - 0.7 * abs(steering_angle)
         
-        # Speed reduction when approaching gates
+        # Speed reduction when approaching targets
         if current_depth < 6.0:
             distance_factor = 0.7
         elif current_depth < 3.0:
@@ -403,8 +566,15 @@ class PurePursuitController:
         else:
             distance_factor = 1.0
         
+        # Apply tracking confidence factor (internal planning assessment)
+        confidence_factor = self.planning_state.get('track_confidence', 1.0)
+        if confidence_factor < 0.7:
+            confidence_speed_factor = 0.8  # Reduce speed when confidence is low
+        else:
+            confidence_speed_factor = 1.0
+        
         # Combine all factors
-        final_speed = base_speed * speed_factor * steering_factor * distance_factor
+        final_speed = base_speed * speed_factor * steering_factor * distance_factor * confidence_speed_factor
         
         return max(final_speed, self.min_speed * 0.7)  # Minimum speed limit
     
@@ -426,10 +596,11 @@ class PurePursuitController:
     def process_cone_detections(self, cone_detections):
         """Process cone detections with strict spatial filtering to focus on immediate track"""
         if not cone_detections:
-            return [], []
+            return [], [], []
             
         blue_cones = []    # Class 1 - LEFT side
         yellow_cones = []  # Class 0 - RIGHT side
+        orange_cones = []  # Class 2 - ORANGE (lap markers)
         
         try:
             for detection in cone_detections:
@@ -457,9 +628,13 @@ class PurePursuitController:
                 except (ValueError, TypeError):
                     continue
                 
-                # Filter by depth range - much more restrictive
-                if depth < self.min_depth or depth > self.max_depth:
-                    continue
+                # Filter by depth range - more lenient for orange cones
+                if cls == 2:  # Orange cone - allow farther detection
+                    if depth < 1.0 or depth > 15.0:
+                        continue
+                else:  # Blue/Yellow cones - strict filtering
+                    if depth < self.min_depth or depth > self.max_depth:
+                        continue
                     
                 center_x = (x1 + x2) / 2
                 center_y = (y1 + y2) / 2
@@ -467,17 +642,26 @@ class PurePursuitController:
                 # Convert to world coordinates
                 world_x, world_y = self.image_to_world_coords(center_x, center_y, depth)
                 
-                # CRITICAL: Filter by lateral distance - only consider cones near the vehicle path
-                if abs(world_x) > self.max_lateral_distance:
-                    continue
+                # CRITICAL: Filter by lateral distance - more lenient for orange cones
+                if cls == 2:  # Orange cone - allow wider lateral range
+                    if abs(world_x) > 8.0:  # Wider range for orange cones
+                        continue
+                else:  # Blue/Yellow cones - strict filtering
+                    if abs(world_x) > self.max_lateral_distance:
+                        continue
                 
-                # CRITICAL: Filter by forward focus angle - only consider cones roughly ahead
+                # CRITICAL: Filter by forward focus angle - more lenient for orange cones
                 angle_to_cone = np.degrees(abs(np.arctan2(world_x, world_y)))
-                if angle_to_cone > self.forward_focus_angle:
-                    continue
+                if cls == 2:  # Orange cone - allow wider angle
+                    if angle_to_cone > 60.0:  # Wider angle for orange cones
+                        continue
+                else:  # Blue/Yellow cones - strict filtering
+                    if angle_to_cone > self.forward_focus_angle:
+                        continue
                 
                 # Only consider cones that are reasonably positioned for track boundaries
                 # Blue cones should be on the left (negative x), yellow on the right (positive x)
+                # Orange cones can be anywhere (lap markers)
                 if cls == 1 and world_x > 1.0:  # Blue cone too far right
                     continue
                 if cls == 0 and world_x < -1.0:  # Yellow cone too far left
@@ -498,25 +682,31 @@ class PurePursuitController:
                     blue_cones.append(cone_data)
                 elif cls == 0:  # Yellow cone - RIGHT side  
                     yellow_cones.append(cone_data)
+                elif cls == 2:  # Orange cone - LAP MARKER
+                    orange_cones.append(cone_data)
                     
         except Exception as e:
             print(f"ERROR processing cone detections: {e}")
-            return [], []
+            return [], [], []
         
         # Sort by depth (closest first), then by angle (most centered first)
         blue_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
         yellow_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
+        orange_cones.sort(key=lambda c: (c['depth'], c['angle_from_center']))
         
         # Debug filtered cones
-        print(f"DEBUG: After spatial filtering - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
+        print(f"DEBUG: After spatial filtering - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
         if blue_cones:
             closest_blue = blue_cones[0]
             print(f"  Closest blue: x={closest_blue['x']:.2f}, y={closest_blue['y']:.2f}, angle={closest_blue['angle_from_center']:.1f}°")
         if yellow_cones:
             closest_yellow = yellow_cones[0]
             print(f"  Closest yellow: x={closest_yellow['x']:.2f}, y={closest_yellow['y']:.2f}, angle={closest_yellow['angle_from_center']:.1f}°")
+        if orange_cones:
+            closest_orange = orange_cones[0]
+            print(f"  Closest orange: x={closest_orange['x']:.2f}, y={closest_orange['y']:.2f}, angle={closest_orange['angle_from_center']:.1f}°")
         
-        return blue_cones, yellow_cones
+        return blue_cones, yellow_cones, orange_cones
     
     def is_valid_track_segment(self, blue, yellow):
         """Strict validation for immediate track segments"""
@@ -551,19 +741,19 @@ class PurePursuitController:
             print(f"ERROR in track segment validation: {e}")
             return False
     
-    def find_best_gate(self, blue_cones, yellow_cones):
-        """Find the best immediate gate with strict proximity focus"""
+    def find_best_track_segment(self, blue_cones, yellow_cones):
+        """Find the best immediate track segment with strict proximity focus"""
         if not blue_cones or not yellow_cones:
-            print(f"DEBUG: Cannot form gate - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
+            print(f"DEBUG: Cannot form track segment - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
             return None
             
-        print(f"DEBUG: Finding immediate gate from {len(blue_cones)} blue and {len(yellow_cones)} yellow cones")
+        print(f"DEBUG: Finding immediate track segment from {len(blue_cones)} blue and {len(yellow_cones)} yellow cones")
         
         # Only consider the closest 3 cones of each color to focus on immediate track
         blue_candidates = blue_cones[:3]
         yellow_candidates = yellow_cones[:3]
         
-        valid_gates = []
+        valid_segments = []
         
         try:
             for blue in blue_candidates:
@@ -572,8 +762,8 @@ class PurePursuitController:
                     if not self.is_valid_track_segment(blue, yellow):
                         continue
                     
-                    # Create gate
-                    gate = {
+                    # Create track segment
+                    segment = {
                         'blue': blue,
                         'yellow': yellow,
                         'midpoint_x': (blue['x'] + yellow['x']) / 2,
@@ -583,38 +773,38 @@ class PurePursuitController:
                         'confidence': (blue.get('confidence', 1.0) + yellow.get('confidence', 1.0)) / 2
                     }
                     
-                    # Additional validation: gate should be roughly centered in front of vehicle
-                    if abs(gate['midpoint_x']) < 2.0:  # Gate center within 2m of vehicle centerline
-                        valid_gates.append(gate)
+                    # Additional validation: segment should be roughly centered in front of vehicle
+                    if abs(segment['midpoint_x']) < 2.0:  # Segment center within 2m of vehicle centerline
+                        valid_segments.append(segment)
             
-            if not valid_gates:
-                print("DEBUG: No valid immediate gates found")
+            if not valid_segments:
+                print("DEBUG: No valid immediate track segments found")
                 return None
             
             # Sort by distance (closest first), heavily prioritize centerline alignment
-            def gate_score(g):
-                distance_score = g['avg_depth']
-                centerline_score = abs(g['midpoint_x']) * 3.0  # Heavy penalty for off-center gates
+            def segment_score(s):
+                distance_score = s['avg_depth']
+                centerline_score = abs(s['midpoint_x']) * 3.0  # Heavy penalty for off-center segments
                 return distance_score + centerline_score
             
-            valid_gates.sort(key=gate_score)
-            best_gate = valid_gates[0]
+            valid_segments.sort(key=segment_score)
+            best_segment = valid_segments[0]
             
-            print(f"DEBUG: Found immediate track gate:")
-            print(f"  Blue cone (LEFT):  x={best_gate['blue']['x']:6.2f}, y={best_gate['blue']['y']:6.2f}")
-            print(f"  Yellow cone (RIGHT): x={best_gate['yellow']['x']:6.2f}, y={best_gate['yellow']['y']:6.2f}")
-            print(f"  Gate midpoint: x={best_gate['midpoint_x']:6.2f}, y={best_gate['midpoint_y']:6.2f}")
-            print(f"  Gate width: {best_gate['width']:.2f}m, Average depth: {best_gate['avg_depth']:.2f}m")
-            print(f"  Centerline offset: {abs(best_gate['midpoint_x']):.2f}m")
+            print(f"DEBUG: Found immediate track segment:")
+            print(f"  Blue cone (LEFT):  x={best_segment['blue']['x']:6.2f}, y={best_segment['blue']['y']:6.2f}")
+            print(f"  Yellow cone (RIGHT): x={best_segment['yellow']['x']:6.2f}, y={best_segment['yellow']['y']:6.2f}")
+            print(f"  Segment midpoint: x={best_segment['midpoint_x']:6.2f}, y={best_segment['midpoint_y']:6.2f}")
+            print(f"  Segment width: {best_segment['width']:.2f}m, Average depth: {best_segment['avg_depth']:.2f}m")
+            print(f"  Centerline offset: {abs(best_segment['midpoint_x']):.2f}m")
             
-            return best_gate
+            return best_segment
             
         except Exception as e:
-            print(f"ERROR in gate finding: {e}")
+            print(f"ERROR in track segment finding: {e}")
             return None
     
     def follow_cone_line(self, blue_cones, yellow_cones):
-        """Fallback: follow immediate cones when no gates can be formed"""
+        """Fallback: follow immediate cones when no track segments can be formed"""
         # Only consider the closest cones that are directly ahead
         immediate_cones = []
         
@@ -673,10 +863,14 @@ class PurePursuitController:
             # If target is getting close to our field of view limits, increase steering aggressiveness
             if lateral_offset > 2.5:  # Getting close to losing sight
                 visibility_risk_factor = 1.4
+                self.planning_state['cone_visibility_risk'] = 2.0  # High risk
                 print(f"DEBUG: High visibility risk - increasing steering aggressiveness by 40%")
             elif lateral_offset > 1.8:  # Moderate risk
                 visibility_risk_factor = 1.2
+                self.planning_state['cone_visibility_risk'] = 1.0  # Moderate risk
                 print(f"DEBUG: Moderate visibility risk - increasing steering aggressiveness by 20%")
+            else:
+                self.planning_state['cone_visibility_risk'] = 0.0  # Low risk
             
             # NEW: Adaptive lookahead with steering aggressiveness consideration
             # For sharp turns, reduce lookahead to make steering more responsive
@@ -694,6 +888,9 @@ class PurePursuitController:
             
             # Apply visibility risk factor to lookahead (shorter lookahead = more aggressive steering)
             adaptive_lookahead = adaptive_lookahead / visibility_risk_factor
+            
+            # Store current lookahead in planning state
+            self.planning_state['current_lookahead'] = adaptive_lookahead
             
             print(f"DEBUG: Adjusted lookahead: {adaptive_lookahead:.2f}m (visibility factor: {visibility_risk_factor:.2f})")
             
@@ -763,14 +960,15 @@ class PurePursuitController:
             
             # NEW: Adaptive smoothing based on visibility risk
             lateral_offset = abs(getattr(self, 'current_target_x', 0.0))
+            tracking_confidence = self.planning_state.get('track_confidence', 1.0)
             
             if len(self.steering_history) >= 3:
                 # If we're at high risk of losing cones, use less smoothing (more responsive)
-                if lateral_offset > 2.5 or self.current_turn_type in ["sharp", "u_turn"]:
+                if lateral_offset > 2.5 or self.current_turn_type in ["sharp", "u_turn"] or tracking_confidence < 0.5:
                     # More aggressive weighting for recent steering inputs
                     weights = np.array([0.7, 0.2, 0.1])  # Heavy emphasis on current steering
                     print(f"DEBUG: High visibility risk - using aggressive steering smoothing")
-                elif lateral_offset > 1.8 or self.current_turn_type == "gentle":
+                elif lateral_offset > 1.8 or self.current_turn_type == "gentle" or tracking_confidence < 0.8:
                     # Moderate smoothing
                     weights = np.array([0.6, 0.25, 0.15])
                     print(f"DEBUG: Moderate visibility risk - using moderate steering smoothing")
@@ -784,11 +982,11 @@ class PurePursuitController:
                 smoothed = raw_steering
             
             # NEW: Adaptive rate limiting based on cone visibility risk
-            if lateral_offset > 2.5:
+            if lateral_offset > 2.5 or tracking_confidence < 0.5:
                 # High risk - allow more aggressive steering changes
                 max_change = 0.25
                 print(f"DEBUG: High visibility risk - allowing max steering change: {max_change}")
-            elif lateral_offset > 1.8:
+            elif lateral_offset > 1.8 or tracking_confidence < 0.8:
                 # Moderate risk - slightly more aggressive
                 max_change = 0.2
             elif self.current_turn_type in ["sharp", "u_turn"]:
@@ -813,172 +1011,175 @@ class PurePursuitController:
             print(f"ERROR in steering smoothing: {e}")
             return self.last_steering
     
-    def control_vehicle(self, cone_detections):
-        """Main control function with robust error handling and enhanced cone visibility preservation"""
+    def update_distance_traveled(self):
+        """Update distance traveled for basic tracking"""
+        try:
+            transform = self.vehicle.get_transform()
+            location = transform.location
+            
+            if self.last_position is not None:
+                distance_delta = np.sqrt(
+                    (location.x - self.last_position.x)**2 + 
+                    (location.y - self.last_position.y)**2 + 
+                    (location.z - self.last_position.z)**2
+                )
+                self.distance_traveled += distance_delta
+            
+            self.last_position = location
+            
+        except Exception as e:
+            print(f"Error updating distance: {e}")
+    
+    def plan_path(self, cone_detections):
+        """Main path planning function - ONLY PUBLISHES ROS2 TOPICS (NO CARLA CONTROL)"""
         try:
             print(f"\n{'='*60}")
-            print(f"DEBUG: CONTROL CYCLE - {len(cone_detections) if cone_detections else 0} detections")
-            print(f"Gates completed: {self.gates_completed}/{self.target_gates}")
-            print(f"All gates completed: {self.all_gates_completed}")
+            print(f"DEBUG: PLANNING CYCLE - {len(cone_detections) if cone_detections else 0} detections")
+            print(f"Laps completed: {self.lap_counter.laps_completed}")
             print(f"Current turn type: {self.current_turn_type}, Direction: {self.turn_direction}")
-            print(f"Cooldown counter: {self.cooldown_counter}")
             print(f"Lost track counter: {self.lost_track_counter}")
+            print(f"🚫 ROS2 TOPICS ONLY - NO CARLA CONTROL")
             print(f"{'='*60}")
             
-            # If all gates completed, stop the vehicle
-            if self.all_gates_completed:
-                print("DEBUG: All gates completed - stopping vehicle")
-                control = carla.VehicleControl()
-                control.steer = 0.0
-                control.throttle = 0.0
-                control.brake = 1.0
-                self.vehicle.apply_control(control)
-                return 0.0, 0.0
+            # Update distance traveled
+            self.update_distance_traveled()
             
-            # Handle cooldown period after passing a gate
-            if self.cooldown_counter > 0:
-                self.cooldown_counter -= 1
-                print(f"DEBUG: Cooldown period - moving forward slowly ({self.cooldown_counter} frames remaining)")
-                control = carla.VehicleControl()
-                control.steer = 0.0
-                control.throttle = 0.12
-                control.brake = 0.0
-                self.vehicle.apply_control(control)
-                
-                # Reset gate validation during cooldown
-                if self.cooldown_counter == 0:
-                    self.gate_history.clear()
-                    self.consecutive_valid_gates = 0
-                    self.current_gate = None
-                    self.previous_gate = None
-                    self.lost_track_counter = 0
-                    self.current_turn_type = "straight"
-                    self.turn_direction = "none"
-                    print("DEBUG: Cooldown complete - ready for next gate")
-                
-                return 0.0, 0.12
+            # Process cone detections (includes orange cones)
+            blue_cones, yellow_cones, orange_cones = self.process_cone_detections(cone_detections)
+            print(f"DEBUG: Processed cones - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
             
-            # Process cone detections
-            blue_cones, yellow_cones = self.process_cone_detections(cone_detections)
-            print(f"DEBUG: Processed cones - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
+            # Check for lap completion through orange gate
+            if orange_cones:
+                transform = self.vehicle.get_transform()
+                vehicle_position = (transform.location.x, transform.location.y, transform.location.z)
+                self.lap_counter.check_orange_gate_passage(orange_cones, vehicle_position)
             
-            # NEW: Enhanced lost track detection with immediate recovery steering
+            # NEW: Enhanced lost track detection with recovery planning
             if len(blue_cones) == 0 and len(yellow_cones) == 0:
                 self.lost_track_counter += 1
+                self.planning_state['track_confidence'] = 0.1
                 print(f"DEBUG: NO CONES DETECTED - lost track for {self.lost_track_counter} frames")
                 
-                # Immediate aggressive steering to try to find cones again
+                # Plan recovery maneuvers (publish to ROS2, no direct control)
                 if self.lost_track_counter <= 10:
                     # Try to steer in the direction we were last going
                     recovery_steering = self.last_steering * 1.5  # Amplify last steering
                     recovery_steering = np.clip(recovery_steering, -0.8, 0.8)
-                    print(f"DEBUG: Applying recovery steering: {recovery_steering:.3f}")
+                    recovery_speed = 0.2
+                    print(f"DEBUG: Planning recovery steering: {recovery_steering:.3f}")
                     
-                    control = carla.VehicleControl()
-                    control.steer = recovery_steering
-                    control.throttle = 0.2  # Slower while recovering
-                    control.brake = 0.0
-                    self.vehicle.apply_control(control)
-                    return recovery_steering, 0.2
+                    # Apply physics constraints to recovery commands
+                    if self.physics_constraints_enabled:
+                        recovery_speed, recovery_steering = self.apply_physics_constraints(recovery_speed, recovery_steering)
+                    
+                    # Publish ROS2 commands (NO CARLA CONTROL)
+                    self.planning_state['target_speed'] = recovery_speed
+                    self.planning_state['target_steering'] = recovery_steering
+                    self.publish_control_targets(recovery_speed, recovery_steering)
+                    self.publish_planning_state()
+                    
+                    return recovery_steering, recovery_speed
                 elif self.lost_track_counter <= 20:
                     # More aggressive search pattern
                     search_steering = 0.6 * np.sin(self.lost_track_counter * 0.3)
-                    print(f"DEBUG: Applying aggressive search pattern: {search_steering:.3f}")
+                    search_speed = 0.15
+                    print(f"DEBUG: Planning aggressive search pattern: {search_steering:.3f}")
                     
-                    control = carla.VehicleControl()
-                    control.steer = search_steering
-                    control.throttle = 0.15
-                    control.brake = 0.0
-                    self.vehicle.apply_control(control)
-                    return search_steering, 0.15
+                    # Apply physics constraints
+                    if self.physics_constraints_enabled:
+                        search_speed, search_steering = self.apply_physics_constraints(search_speed, search_steering)
+                    
+                    # Publish ROS2 commands (NO CARLA CONTROL)
+                    self.planning_state['target_speed'] = search_speed
+                    self.planning_state['target_steering'] = search_steering
+                    self.publish_control_targets(search_speed, search_steering)
+                    self.publish_planning_state()
+                    
+                    return search_steering, search_speed
                 else:
                     # Last resort - wide search
                     search_steering = 0.8 * np.sin(self.lost_track_counter * 0.2)
-                    control = carla.VehicleControl()
-                    control.steer = search_steering
-                    control.throttle = 0.1
-                    control.brake = 0.0
-                    self.vehicle.apply_control(control)
-                    return search_steering, 0.1
+                    search_speed = 0.1
+                    
+                    # Apply physics constraints
+                    if self.physics_constraints_enabled:
+                        search_speed, search_steering = self.apply_physics_constraints(search_speed, search_steering)
+                    
+                    # Publish ROS2 commands (NO CARLA CONTROL)
+                    self.planning_state['target_speed'] = search_speed
+                    self.planning_state['target_steering'] = search_steering
+                    self.publish_control_targets(search_speed, search_steering)
+                    self.publish_planning_state()
+                    
+                    return search_steering, search_speed
             
-            # Try to find a gate
-            gate = self.find_best_gate(blue_cones, yellow_cones)
+            # Try to find a track segment
+            track_segment = self.find_best_track_segment(blue_cones, yellow_cones)
             
-            # If no gate found, try cone line following
-            if not gate and (blue_cones or yellow_cones):
-                gate = self.follow_cone_line(blue_cones, yellow_cones)
+            # If no track segment found, try cone line following
+            if not track_segment and (blue_cones or yellow_cones):
+                track_segment = self.follow_cone_line(blue_cones, yellow_cones)
                 print("DEBUG: Using cone line following")
             
-            if not gate:
+            if not track_segment:
                 self.lost_track_counter += 1
+                self.planning_state['track_confidence'] = 0.3
                 print(f"DEBUG: No navigation target found - lost track for {self.lost_track_counter} frames")
                 
                 # If lost for too long, implement search pattern
                 if self.lost_track_counter > self.max_lost_track_frames:
-                    print("DEBUG: Lost track for too long - implementing search pattern")
+                    print("DEBUG: Lost track for too long - planning search pattern")
                     search_steering = 0.3 * np.sin(self.lost_track_counter * 0.1)  # Gentle search pattern
-                    control = carla.VehicleControl()
-                    control.steer = search_steering
-                    control.throttle = 0.15
-                    control.brake = 0.0
-                    self.vehicle.apply_control(control)
-                    return search_steering, 0.15
+                    search_speed = 0.15
+                    
+                    # Apply physics constraints
+                    if self.physics_constraints_enabled:
+                        search_speed, search_steering = self.apply_physics_constraints(search_speed, search_steering)
+                    
+                    # Publish ROS2 commands (NO CARLA CONTROL)
+                    self.planning_state['target_speed'] = search_speed
+                    self.planning_state['target_steering'] = search_steering
+                    self.publish_control_targets(search_speed, search_steering)
+                    self.publish_planning_state()
+                    
+                    return search_steering, search_speed
                 else:
                     # Move forward slowly while searching
-                    control = carla.VehicleControl()
-                    control.steer = self.last_steering * 0.5
-                    control.throttle = 0.15
-                    control.brake = 0.0
-                    self.vehicle.apply_control(control)
-                    return self.last_steering * 0.5, 0.15
+                    recovery_steering = self.last_steering * 0.5
+                    recovery_speed = 0.15
+                    
+                    # Apply physics constraints
+                    if self.physics_constraints_enabled:
+                        recovery_speed, recovery_steering = self.apply_physics_constraints(recovery_speed, recovery_steering)
+                    
+                    # Publish ROS2 commands (NO CARLA CONTROL)
+                    self.planning_state['target_speed'] = recovery_speed
+                    self.planning_state['target_steering'] = recovery_steering
+                    self.publish_control_targets(recovery_speed, recovery_steering)
+                    self.publish_planning_state()
+                    
+                    return recovery_steering, recovery_speed
             
             # Reset lost track counter if we found something
             self.lost_track_counter = 0
+            # Restore confidence gradually
+            self.planning_state['track_confidence'] = min(
+                self.planning_state['track_confidence'] + 0.1, 1.0
+            )
             
             # Detect turn type and calculate path widening
-            turn_type, turn_direction, path_offset = self.detect_turn_type(gate, blue_cones, yellow_cones)
+            turn_type, turn_direction, path_offset = self.detect_turn_type(track_segment, blue_cones, yellow_cones)
             self.current_turn_type = turn_type
             self.turn_direction = turn_direction
             self.path_offset = path_offset
             
-            # Update current gate
-            self.current_gate = gate
-            
-            # Check if we've passed through the current gate
-            current_depth = gate['avg_depth']
-            if current_depth < self.gate_passed_threshold and gate.get('type') != 'cone_line':
-                self.gates_completed += 1
-                print(f"DEBUG: 🎉 GATE {self.gates_completed} PASSED! 🎉")
-                print(f"DEBUG: Total gates completed: {self.gates_completed}/{self.target_gates}")
-                
-                # Check if all gates are completed
-                if self.gates_completed >= self.target_gates:
-                    print(f"DEBUG: 🏁 ALL {self.target_gates} GATES COMPLETED! MISSION ACCOMPLISHED! 🏁")
-                    self.all_gates_completed = True
-                    control = carla.VehicleControl()
-                    control.steer = 0.0
-                    control.throttle = 0.0
-                    control.brake = 1.0
-                    self.vehicle.apply_control(control)
-                    return 0.0, 0.0
-                else:
-                    print(f"DEBUG: Looking for next gate... ({self.target_gates - self.gates_completed} remaining)")
-                    self.cooldown_counter = self.cooldown_duration
-                    
-                    # Move forward during cooldown
-                    control = carla.VehicleControl()
-                    control.steer = 0.0
-                    control.throttle = 0.12
-                    control.brake = 0.0
-                    self.vehicle.apply_control(control)
-                    return 0.0, 0.12
-            
             # Adjust target point for wider turns
-            original_target_x = gate['midpoint_x']
-            original_target_y = gate['midpoint_y']
+            original_target_x = track_segment['midpoint_x']
+            original_target_y = track_segment['midpoint_y']
             
             # NEW: Store current target for visibility calculations
             self.current_target_x = original_target_x
+            self.current_target_y = original_target_y
             
             adjusted_target_x, adjusted_target_y = self.adjust_target_for_turn(
                 original_target_x, original_target_y, turn_type, turn_direction, path_offset
@@ -989,85 +1190,74 @@ class PurePursuitController:
             smooth_steering = self.smooth_steering(raw_steering)
             
             # Calculate adaptive speed based on turn type
-            target_speed = self.calculate_adaptive_speed(turn_type, smooth_steering, current_depth)
+            current_depth = track_segment['avg_depth']
+            raw_speed = self.calculate_adaptive_speed(turn_type, smooth_steering, current_depth)
             
-            # Get current speed
-            velocity = self.vehicle.get_velocity()
-            current_speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
+            # Calculate and store path curvature for PID information
+            self.planning_state['path_curvature'] = self.calculate_path_curvature(adjusted_target_x, adjusted_target_y)
             
-            # Apply control
-            control = carla.VehicleControl()
-            control.steer = float(smooth_steering)
-            
-            speed_diff = target_speed - current_speed
-            if speed_diff > 0.5:
-                control.throttle = min(0.5, 0.2 + 0.3 * (speed_diff / self.max_speed))
-                control.brake = 0.0
-            elif speed_diff < -0.5:
-                control.throttle = 0.0
-                control.brake = min(0.4, 0.2 * abs(speed_diff) / self.max_speed)
+            # Apply physics constraints (loosened for PID integration)
+            if self.physics_constraints_enabled:
+                target_speed, target_steering = self.apply_physics_constraints(raw_speed, smooth_steering)
             else:
-                control.throttle = 0.3
-                control.brake = 0.0
+                target_speed, target_steering = raw_speed, smooth_steering
             
-            self.vehicle.apply_control(control)
+            # Update planning state
+            self.planning_state['target_speed'] = target_speed
+            self.planning_state['target_steering'] = target_steering
             
-            # Log speed data
-            navigation_type = f"{gate.get('type', 'gate')}_{turn_type}"
-            self.speed_logger.log_speed_data(
-                self.vehicle, target_speed, control.throttle, control.brake, 
-                smooth_steering, self.gates_completed, navigation_type
-            )
+            # Publish ROS2 commands and planning state (NO CARLA CONTROL)
+            self.publish_control_targets(target_speed, target_steering)
+            self.publish_planning_state()
             
             # Enhanced debug output
-            direction = 'LEFT' if smooth_steering > 0 else 'RIGHT' if smooth_steering < 0 else 'STRAIGHT'
-            speed_stats = self.speed_logger.get_speed_stats()
+            direction = 'LEFT' if target_steering > 0 else 'RIGHT' if target_steering < 0 else 'STRAIGHT'
             
-            print(f"DEBUG: APPLIED CONTROL:")
-            print(f"  Navigation: {navigation_type}")
+            print(f"DEBUG: PLANNED CONTROL (ROS2 ONLY):")
+            print(f"  Navigation: {track_segment.get('type', 'track_segment')}_{turn_type}")
             print(f"  Turn Analysis: {turn_type}-{turn_direction} (offset: {path_offset:.2f}m)")
             print(f"  Original target: ({original_target_x:.2f}, {original_target_y:.2f})")
             print(f"  Adjusted target: ({adjusted_target_x:.2f}, {adjusted_target_y:.2f})")
             print(f"  Target distance: {current_depth:.2f}m")
-            print(f"  Turn radius: {self.calculate_turn_radius(np.radians(smooth_steering * 30)):.2f}m")
-            print(f"  Steering: {smooth_steering:.3f} ({direction})")
+            print(f"  Turn radius: {self.calculate_turn_radius(np.radians(target_steering * 30)):.2f}m")
+            print(f"  Raw->Final: Speed {raw_speed:.2f}->{target_speed:.2f}, Steering {smooth_steering:.3f}->{target_steering:.3f}")
+            print(f"  Steering: {target_steering:.3f} ({direction})")
             print(f"  Cone visibility risk: {'HIGH' if abs(original_target_x) > 2.5 else 'MODERATE' if abs(original_target_x) > 1.8 else 'LOW'}")
-            print(f"  Throttle: {control.throttle:.2f}")
-            print(f"  Brake: {control.brake:.2f}")
-            print(f"  Current Speed: {speed_stats['current']:.1f} m/s ({speed_stats['current']*3.6:.1f} km/h)")
-            print(f"  Target Speed: {target_speed:.1f} m/s ({target_speed*3.6:.1f} km/h)")
-            print(f"  Avg Speed: {speed_stats['average']:.1f} m/s")
-            print(f"  Distance: {self.speed_logger.distance_traveled:.1f}m")
+            print(f"  Published Speed: {target_speed:.1f} m/s ({target_speed*3.6:.1f} km/h)")
+            print(f"  Published Steering: {target_steering:.3f}")
+            print(f"  Distance: {self.distance_traveled:.1f}m")
+            print(f"  Laps: {self.lap_counter.laps_completed}")
+            print(f"  Track Confidence: {self.planning_state['track_confidence']:.2f}")
+            print(f"  Physics Constraints: {'APPLIED' if self.physics_constraints_enabled else 'OFF'}")
+            print(f"  🚫 NO CARLA CONTROL - ROS2 TOPICS ONLY")
             print(f"{'='*60}\n")
             
-            return smooth_steering, target_speed
+            return target_steering, target_speed
             
         except Exception as e:
-            print(f"ERROR in vehicle control: {e}")
+            print(f"ERROR in path planning: {e}")
             import traceback
             traceback.print_exc()
-            # Safe fallback - also log the emergency stop
-            control = carla.VehicleControl()
-            control.steer = 0.0
-            control.throttle = 0.0
-            control.brake = 0.5
-            self.vehicle.apply_control(control)
-            
-            # Log emergency stop
-            self.speed_logger.log_speed_data(
-                self.vehicle, 0.0, 0.0, 0.5, 0.0, 
-                self.gates_completed, "emergency_stop"
-            )
+            # Safe fallback - publish safe commands to ROS2 (NO CARLA CONTROL)
+            self.publish_control_targets(0.0, 0.0)
             
             return 0.0, 0.0
-    
-    def cleanup(self):
-        """Clean up controller resources"""
-        if hasattr(self, 'speed_logger'):
-            self.speed_logger.close()
 
-class CarlaGateRacingSystem:
+class CarlaRacingSystem(Node):
     def __init__(self):
+        super().__init__('carla_racing_system')
+        
+        # Declare ROS2 parameters
+        self.declare_parameter('model_path', '/home/legion5/hydrakon_ws/src/planning_module/planning_module/best.pt')
+        self.declare_parameter('show_visualization', True)
+        self.declare_parameter('control_frequency', 10.0)
+        
+        # Get parameters
+        self.model_path = self.get_parameter('model_path').value
+        self.show_visualization = self.get_parameter('show_visualization').value
+        self.control_frequency = self.get_parameter('control_frequency').value
+        
+        # CARLA components
         self.client = None
         self.world = None
         self.vehicle = None
@@ -1076,24 +1266,33 @@ class CarlaGateRacingSystem:
         self.running = True
         
         # Threading
-        self.control_thread = None
         self.display_thread = None
+        
+        # ROS2 timer for planning loop (NO CARLA CONTROL)
+        timer_period = 1.0 / self.control_frequency
+        self.planning_timer = self.create_timer(timer_period, self.planning_loop_ros)
         
         # Setup signal handler for clean shutdown
         signal.signal(signal.SIGINT, self.signal_handler)
         
+        self.get_logger().info("CARLA Racing System Node initialized with ROS2 interface")
+        self.get_logger().info("🚫 NO CARLA CONTROL - Planning and publishing ROS2 topics only")
+        self.get_logger().info(f"Model path: {self.model_path}")
+        self.get_logger().info(f"Control frequency: {self.control_frequency} Hz")
+        self.get_logger().info(f"Visualization: {'ENABLED' if self.show_visualization else 'DISABLED'}")
+    
     def signal_handler(self, signum, frame):
         """Handle Ctrl+C for clean shutdown"""
-        print("\nShutting down gracefully...")
+        self.get_logger().info("Received shutdown signal")
         self.running = False
-        
+    
     def setup_carla(self):
         """Initialize CARLA connection and find existing vehicle"""
         try:
             # Connect to CARLA
             self.client = carla.Client('localhost', 2000)
             self.client.set_timeout(10.0)
-            print("Connected to CARLA server")
+            self.get_logger().info("Connected to CARLA server")
             
             # Get world
             self.world = self.client.get_world()
@@ -1106,7 +1305,7 @@ class CarlaGateRacingSystem:
             return True
             
         except Exception as e:
-            print(f"Error setting up CARLA: {e}")
+            self.get_logger().error(f"Error setting up CARLA: {e}")
             return False
     
     def find_existing_vehicle(self):
@@ -1119,10 +1318,10 @@ class CarlaGateRacingSystem:
             vehicles = all_actors.filter('vehicle.*')
             
             if not vehicles:
-                print("ERROR: No vehicles found in the world")
-                print("Available actors:")
+                self.get_logger().error("No vehicles found in the world")
+                self.get_logger().info("Available actors:")
                 for actor in all_actors:
-                    print(f"  - {actor.type_id} (ID: {actor.id})")
+                    self.get_logger().info(f"  - {actor.type_id} (ID: {actor.id})")
                 return None
             
             # Use the first vehicle found
@@ -1130,29 +1329,29 @@ class CarlaGateRacingSystem:
             transform = vehicle.get_transform()
             location = transform.location
             
-            print(f"Found existing vehicle: {vehicle.type_id} (ID: {vehicle.id})")
-            print(f"Vehicle location: x={location.x:.2f}, y={location.y:.2f}, z={location.z:.2f}")
-            print(f"Vehicle rotation: pitch={transform.rotation.pitch:.2f}, yaw={transform.rotation.yaw:.2f}, roll={transform.rotation.roll:.2f}")
+            self.get_logger().info(f"Found existing vehicle: {vehicle.type_id} (ID: {vehicle.id})")
+            self.get_logger().info(f"Vehicle location: x={location.x:.2f}, y={location.y:.2f}, z={location.z:.2f}")
+            self.get_logger().info("🚫 Vehicle will NOT be controlled by this node - ROS2 topics only")
             
             # Check if vehicle is alive
             if not vehicle.is_alive:
-                print("ERROR: Found vehicle is not alive")
+                self.get_logger().error("Found vehicle is not alive")
                 return None
                 
             # List all available vehicles for reference
-            print(f"Available vehicles in world ({len(vehicles)} total):")
+            self.get_logger().info(f"Available vehicles in world ({len(vehicles)} total):")
             for i, v in enumerate(vehicles):
                 loc = v.get_transform().location
-                print(f"  {i+1}. {v.type_id} (ID: {v.id}) at ({loc.x:.1f}, {loc.y:.1f}, {loc.z:.1f})")
+                self.get_logger().info(f"  {i+1}. {v.type_id} (ID: {v.id}) at ({loc.x:.1f}, {loc.y:.1f}, {loc.z:.1f})")
                 
             return vehicle
             
         except Exception as e:
-            print(f"Error finding existing vehicle: {str(e)}")
+            self.get_logger().error(f"Error finding existing vehicle: {str(e)}")
             return None
     
-    def setup_camera_and_controller(self, model_path=None):
-        """Setup ZED 2i camera and robust controller"""
+    def setup_camera_and_controller(self):
+        """Setup ZED 2i camera and robust controller with ROS2 integration"""
         try:
             # Setup camera
             self.camera = Zed2iCamera(
@@ -1160,64 +1359,56 @@ class CarlaGateRacingSystem:
                 vehicle=self.vehicle,
                 resolution=(1280, 720),
                 fps=30,
-                model_path=model_path
+                model_path=self.model_path
             )
             
             if not self.camera.setup():
                 raise RuntimeError("Failed to setup camera")
-                
-            # Setup robust controller
+            
+            # Setup robust controller with ROS2 integration (NO CARLA CONTROL)
             self.controller = PurePursuitController(self.vehicle)
-            print("Camera and robust controller setup complete")
-            print(f"Speed logging enabled - logs will be saved to: speed_logs/")
+            self.get_logger().info("Camera and planning controller with ROS2 interface setup complete")
+            self.get_logger().info("🚫 Controller will NOT control vehicle - ROS2 topics only")
+            self.get_logger().info("Lap counter enabled - orange cones will be detected for lap counting")
             
             return True
             
         except Exception as e:
-            print(f"Error setting up camera and controller: {e}")
+            self.get_logger().error(f"Error setting up camera and controller: {e}")
             return False
     
-    def control_loop(self):
-        """Main control loop for vehicle"""
-        print("Starting control loop...")
-        
-        while self.running:
-            try:
-                # Process camera frame
-                self.camera.process_frame()
-                
-                # Get cone detections
-                cone_detections = getattr(self.camera, 'cone_detections', [])
-                
-                # Control vehicle using robust controller
-                steering, speed = self.controller.control_vehicle(cone_detections)
-                
-                # If all gates completed, stop the system
-                if self.controller.all_gates_completed:
-                    print(f"All {self.controller.target_gates} gates completed! Stopping system in 5 seconds...")
-                    time.sleep(5.0)
-                    self.running = False
-                    break
-                
-                time.sleep(0.05)  # 20 Hz control loop
-                
-            except Exception as e:
-                print(f"Error in control loop: {e}")
-                import traceback
-                traceback.print_exc()
-                time.sleep(0.1)  # Brief pause before retrying
+    def planning_loop_ros(self):
+        """ROS2 timer-based planning loop (NO CARLA CONTROL)"""
+        try:
+            if not self.running or not self.camera or not self.controller:
+                return
+            
+            # Process camera frame
+            self.camera.process_frame()
+            
+            # Get cone detections
+            cone_detections = getattr(self.camera, 'cone_detections', [])
+            
+            # Plan path using controller (publishes ROS2 topics, NO CARLA CONTROL)
+            steering, speed = self.controller.plan_path(cone_detections)
+            
+        except Exception as e:
+            self.get_logger().error(f"Error in ROS2 planning loop: {e}")
     
     def display_loop(self):
-        """Display camera feed with detections"""
-        print("Starting display loop...")
+        """Display camera feed with detections and YOLO bounding boxes"""
+        if not self.show_visualization:
+            return
+            
+        self.get_logger().info("Starting display loop with YOLO visualization...")
         
         while self.running:
             try:
                 if hasattr(self.camera, 'rgb_image') and self.camera.rgb_image is not None:
-                    # Create visualization
-                    viz_image = self.create_visualization()
+                    # Create visualization with YOLO bounding boxes
+                    viz_image = self.create_visualization_with_yolo()
                     
-                    cv2.imshow('CARLA Gate Racing - Robust Controller (Existing Vehicle)', viz_image)
+                    cv2.imshow('ROS2 CARLA Planning - YOLO Detection & Lap Counter (NO CARLA CONTROL)', viz_image)
                     
                     # Check for exit key
                     if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -1227,11 +1418,11 @@ class CarlaGateRacingSystem:
                 time.sleep(0.033)  # ~30 FPS display
                 
             except Exception as e:
-                print(f"Error in display loop: {e}")
+                self.get_logger().error(f"Error in display loop: {e}")
                 time.sleep(0.1)  # Brief pause before retrying
     
-    def create_visualization(self):
-        """Create visualization with enhanced error handling"""
+    def create_visualization_with_yolo(self):
+        """Create visualization with YOLO bounding boxes and enhanced ROS2 status"""
         try:
             if not hasattr(self.camera, 'rgb_image') or self.camera.rgb_image is None:
                 return np.zeros((720, 1280, 3), dtype=np.uint8)
@@ -1239,167 +1430,315 @@ class CarlaGateRacingSystem:
             viz_image = self.camera.rgb_image.copy()
             
             # Add vehicle info at the top
-            vehicle_info = f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id})"
+            vehicle_info = f"ROS2 Planning Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id}) - NO CARLA CONTROL"
             cv2.putText(viz_image, vehicle_info, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
-            # Process detections for visualization
+            # Get cone detections for YOLO visualization
             cone_detections = getattr(self.camera, 'cone_detections', [])
-            if cone_detections and not self.controller.all_gates_completed:
-                blue_cones, yellow_cones = self.controller.process_cone_detections(cone_detections)
+            
+            # Draw YOLO bounding boxes around ALL detected cones
+            if cone_detections:
+                self.draw_yolo_detections(viz_image, cone_detections)
+                
+                # Process detections for planning visualization
+                blue_cones, yellow_cones, orange_cones = self.controller.process_cone_detections(cone_detections)
                 
                 # Try to find current target
-                gate = self.controller.find_best_gate(blue_cones, yellow_cones)
-                if not gate and (blue_cones or yellow_cones):
-                    gate = self.controller.follow_cone_line(blue_cones, yellow_cones)
+                track_segment = self.controller.find_best_track_segment(blue_cones, yellow_cones)
+                if not track_segment and (blue_cones or yellow_cones):
+                    track_segment = self.controller.follow_cone_line(blue_cones, yellow_cones)
                 
-                # Draw target if found
-                if gate:
-                    # Draw target point
-                    depth = gate.get('midpoint_y', 5.0)
-                    angle = np.arctan2(gate.get('midpoint_x', 0), depth)
-                    px = int(640 + (angle / np.radians(45)) * 640)
-                    py = int(720 - 100 - depth * 25)
-                    py = max(50, min(py, 720))
-                    px = max(0, min(px, 1280))
+                # Draw planning target if found
+                if track_segment:
+                    self.draw_planning_target(viz_image, track_segment)
                     
-                    # Different colors for different navigation types
-                    if gate.get('type') == 'cone_line':
-                        color = (255, 0, 255)  # Magenta for cone line following
-                        text = "CONE LINE"
-                    else:
-                        color = (0, 0, 255)    # Red for gate
-                        text = "GATE TARGET"
-                    
-                    cv2.circle(viz_image, (px, py), 15, color, -1)
-                    cv2.putText(viz_image, text, (px+20, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-                    
-                    # Draw gate line if it's a proper gate
-                    if gate.get('type') != 'cone_line' and 'blue' in gate and 'yellow' in gate:
-                        blue_cone = gate['blue']
-                        yellow_cone = gate['yellow']
-                        
-                        # Blue cone position
-                        blue_angle = np.arctan2(blue_cone['x'], blue_cone['y'])
-                        blue_px = int(640 + (blue_angle / np.radians(45)) * 640)
-                        blue_py = int(720 - 100 - blue_cone['y'] * 25)
-                        blue_py = max(50, min(blue_py, 720))
-                        blue_px = max(0, min(blue_px, 1280))
-                        
-                        # Yellow cone position  
-                        yellow_angle = np.arctan2(yellow_cone['x'], yellow_cone['y'])
-                        yellow_px = int(640 + (yellow_angle / np.radians(45)) * 640)
-                        yellow_py = int(720 - 100 - yellow_cone['y'] * 25)
-                        yellow_py = max(50, min(yellow_py, 720))
-                        yellow_px = max(0, min(yellow_px, 1280))
-                        
-                        # Draw gate line and cones
-                        cv2.line(viz_image, (blue_px, blue_py), (yellow_px, yellow_py), (0, 255, 0), 4)
-                        cv2.circle(viz_image, (blue_px, blue_py), 8, (255, 0, 0), -1)
-                        cv2.circle(viz_image, (yellow_px, yellow_py), 8, (0, 255, 255), -1)
+                    # Draw track line if it's a proper track segment
+                    if track_segment.get('type') != 'cone_line' and 'blue' in track_segment and 'yellow' in track_segment:
+                        self.draw_track_line(viz_image, track_segment)
+                
+                # Draw orange cone lap markers
+                self.draw_orange_lap_markers(viz_image, orange_cones)
             
-            # Add enhanced status text with speed information
-            speed_stats = self.controller.speed_logger.get_speed_stats()
-            status_text = [
-                f"Mode: Using Existing Vehicle",
-                f"Gates Completed: {self.controller.gates_completed}/{self.controller.target_gates}",
-                f"Mission Status: {'COMPLETED' if self.controller.all_gates_completed else 'IN PROGRESS'}",
-                f"Blue Cones: {len([d for d in cone_detections if d.get('cls') == 1])}",
-                f"Yellow Cones: {len([d for d in cone_detections if d.get('cls') == 0])}",
-                f"Current Speed: {speed_stats['current']:.1f} m/s ({speed_stats['current']*3.6:.1f} km/h)",
-                f"Avg Speed: {speed_stats['average']:.1f} m/s ({speed_stats['average']*3.6:.1f} km/h)",
-                f"Max Speed: {speed_stats['max']:.1f} m/s ({speed_stats['max']*3.6:.1f} km/h)",
-                f"Distance: {self.controller.speed_logger.distance_traveled:.1f}m",
-                f"Steering: {self.controller.last_steering:.3f}",
-                f"Lost Track: {self.controller.lost_track_counter}",
-                f"Cooldown: {self.controller.cooldown_counter if self.controller.cooldown_counter > 0 else 'None'}"
-            ]
-            
-            for i, text in enumerate(status_text):
-                y_pos = 50 + i*20  # Start lower to avoid vehicle info
-                color = (0, 255, 0) if not self.controller.all_gates_completed else (0, 255, 255)
-                if i == 0:  # Mode info
-                    color = (255, 0, 255)  # Magenta for mode
-                elif i == 1:  # Gate counter
-                    color = (0, 255, 255) if self.controller.all_gates_completed else (255, 255, 0)
-                elif i == 5:  # Current speed
-                    color = (0, 255, 255)  # Cyan for current speed
-                elif i == 6:  # Average speed
-                    color = (255, 255, 0)  # Yellow for average speed
-                elif i == 7:  # Max speed
-                    color = (255, 0, 255)  # Magenta for max speed
-                elif i == 10:  # Lost track counter
-                    color = (255, 0, 0) if self.controller.lost_track_counter > 10 else (0, 255, 0)
-                cv2.putText(viz_image, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            # Add enhanced status text with ROS2 information
+            self.add_ros2_status_overlay(viz_image, cone_detections)
             
             return viz_image
             
         except Exception as e:
-            print(f"Error creating visualization: {e}")
+            self.get_logger().error(f"Error creating YOLO visualization: {e}")
             # Return a blank image if visualization fails
             blank_image = np.zeros((720, 1280, 3), dtype=np.uint8)
             cv2.putText(blank_image, "Visualization Error", (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
             return blank_image
     
-    def run(self, model_path=None):
-        """Main execution function"""
+    def draw_yolo_detections(self, viz_image, cone_detections):
+        """Draw YOLO bounding boxes around all detected cones"""
+        try:
+            for detection in cone_detections:
+                if not isinstance(detection, dict):
+                    continue
+                    
+                # Get bounding box coordinates
+                box = detection.get('box', [])
+                if len(box) < 4:
+                    continue
+                    
+                x1, y1, x2, y2 = box[:4]
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                
+                # Get class and confidence
+                cls = detection.get('cls', -1)
+                conf = detection.get('conf', 0.0)
+                depth = detection.get('depth', 0.0)
+                
+                # Class names and colors
+                class_names = {0: 'Yellow', 1: 'Blue', 2: 'Orange'}
+                class_colors = {0: (0, 255, 255), 1: (255, 0, 0), 2: (0, 165, 255)}  # BGR format
+                
+                class_name = class_names.get(cls, f'Class_{cls}')
+                color = class_colors.get(cls, (255, 255, 255))
+                
+                # Draw bounding box
+                cv2.rectangle(viz_image, (x1, y1), (x2, y2), color, 2)
+                
+                # Create label with class, confidence, and depth
+                label = f"{class_name}: {conf:.2f} ({depth:.1f}m)"
+                
+                # Get text size for background
+                (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                
+                # Draw background for text
+                cv2.rectangle(viz_image, (x1, y1 - text_height - 10), (x1 + text_width, y1), color, -1)
+                
+                # Draw text
+                cv2.putText(viz_image, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+                
+                # Draw center point
+                center_x = (x1 + x2) // 2
+                center_y = (y1 + y2) // 2
+                cv2.circle(viz_image, (center_x, center_y), 3, color, -1)
+                
+        except Exception as e:
+            self.get_logger().error(f"Error drawing YOLO detections: {e}")
+    
+    def draw_planning_target(self, viz_image, track_segment):
+        """Draw the planning target point"""
+        try:
+            # Draw target point
+            depth = track_segment.get('midpoint_y', 5.0)
+            angle = np.arctan2(track_segment.get('midpoint_x', 0), depth)
+            px = int(640 + (angle / np.radians(45)) * 640)
+            py = int(720 - 100 - depth * 25)
+            py = max(50, min(py, 720))
+            px = max(0, min(px, 1280))
+            
+            # Different colors for different navigation types
+            if track_segment.get('type') == 'cone_line':
+                color = (255, 0, 255)  # Magenta for cone line following
+                text = "CONE LINE TARGET"
+            else:
+                color = (0, 0, 255)    # Red for track segment
+                text = "TRACK TARGET"
+            
+            # Draw target circle
+            cv2.circle(viz_image, (px, py), 15, color, -1)
+            cv2.circle(viz_image, (px, py), 15, (255, 255, 255), 2)  # White border
+            
+            # Draw target text
+            cv2.putText(viz_image, text, (px+20, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            
+            # Draw distance to target
+            distance_text = f"{depth:.1f}m"
+            cv2.putText(viz_image, distance_text, (px-30, py+25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            
+        except Exception as e:
+            self.get_logger().error(f"Error drawing planning target: {e}")
+    
+    def draw_track_line(self, viz_image, track_segment):
+        """Draw track line between blue and yellow cones"""
+        try:
+            blue_cone = track_segment['blue']
+            yellow_cone = track_segment['yellow']
+            
+            # Blue cone position
+            blue_angle = np.arctan2(blue_cone['x'], blue_cone['y'])
+            blue_px = int(640 + (blue_angle / np.radians(45)) * 640)
+            blue_py = int(720 - 100 - blue_cone['y'] * 25)
+            blue_py = max(50, min(blue_py, 720))
+            blue_px = max(0, min(blue_px, 1280))
+            
+            # Yellow cone position  
+            yellow_angle = np.arctan2(yellow_cone['x'], yellow_cone['y'])
+            yellow_px = int(640 + (yellow_angle / np.radians(45)) * 640)
+            yellow_py = int(720 - 100 - yellow_cone['y'] * 25)
+            yellow_py = max(50, min(yellow_py, 720))
+            yellow_px = max(0, min(yellow_px, 1280))
+            
+            # Draw track line
+            cv2.line(viz_image, (blue_px, blue_py), (yellow_px, yellow_py), (0, 255, 0), 4)
+            
+            # Draw cone markers
+            cv2.circle(viz_image, (blue_px, blue_py), 8, (255, 0, 0), -1)
+            cv2.circle(viz_image, (yellow_px, yellow_py), 8, (0, 255, 255), -1)
+            
+            # Add distance labels
+            cv2.putText(viz_image, f"{blue_cone['depth']:.1f}m", 
+                       (blue_px + 10, blue_py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
+            cv2.putText(viz_image, f"{yellow_cone['depth']:.1f}m", 
+                       (yellow_px + 10, yellow_py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+            
+        except Exception as e:
+            self.get_logger().error(f"Error drawing track line: {e}")
+    
+    def draw_orange_lap_markers(self, viz_image, orange_cones):
+        """Draw orange cone lap markers"""
+        try:
+            for orange in orange_cones:
+                orange_angle = np.arctan2(orange['x'], orange['y'])
+                orange_px = int(640 + (orange_angle / np.radians(45)) * 640)
+                orange_py = int(720 - 100 - orange['y'] * 25)
+                orange_py = max(50, min(orange_py, 720))
+                orange_px = max(0, min(orange_px, 1280))
+                
+                # Draw orange cone with distinct marker
+                cv2.circle(viz_image, (orange_px, orange_py), 12, (0, 165, 255), -1)  # Orange color
+                cv2.circle(viz_image, (orange_px, orange_py), 12, (255, 255, 255), 2)  # White border
+                cv2.putText(viz_image, "LAP", (orange_px-15, orange_py-20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                cv2.putText(viz_image, f"{orange['depth']:.1f}m", (orange_px-20, orange_py+30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
+                
+        except Exception as e:
+            self.get_logger().error(f"Error drawing orange lap markers: {e}")
+    
+    def add_ros2_status_overlay(self, viz_image, cone_detections):
+        """Add comprehensive ROS2 status information overlay"""
+        try:
+            # Get current vehicle velocity (for display only)
+            velocity = self.vehicle.get_velocity()
+            current_speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
+            
+            status_text = [
+                f"🚫 ROS2 PLANNING NODE - NO CARLA CONTROL",
+                f"Publishing Topics: /target_speed, /target_steering, /path_curvature",
+                f"Laps Completed: {self.controller.lap_counter.laps_completed}",
+                f"YOLO Detections: Blue: {len([d for d in cone_detections if d.get('cls') == 1])}, "
+                f"Yellow: {len([d for d in cone_detections if d.get('cls') == 0])}, "
+                f"Orange: {len([d for d in cone_detections if d.get('cls') == 2])}",
+                f"Current Speed: {current_speed:.1f} m/s ({current_speed*3.6:.1f} km/h)",
+                f"Target Speed: {self.controller.planning_state['target_speed']:.1f} m/s (ROS2)",
+                f"Target Steering: {self.controller.planning_state['target_steering']:.3f} (ROS2)",
+                f"Turn Type: {self.controller.current_turn_type.upper()} ({self.controller.turn_direction})",
+                f"Track Confidence: {self.controller.planning_state['track_confidence']:.2f}",
+                f"Path Curvature: {self.controller.planning_state['path_curvature']:.3f} (ROS2)",
+                f"Cone Visibility Risk: {'HIGH' if self.controller.planning_state['cone_visibility_risk'] >= 2.0 else 'MODERATE' if self.controller.planning_state['cone_visibility_risk'] >= 1.0 else 'LOW'}",
+                f"Physics Constraints: {'ON' if self.controller.physics_constraints_enabled else 'OFF'} (Loosened)",
+                f"PID Info Publishing: {'ON' if self.controller.pid_enabled else 'OFF'}",
+                f"Distance: {self.controller.distance_traveled:.1f}m",
+                f"Lost Track: {self.controller.lost_track_counter}",
+                f"Planning Frequency: {self.control_frequency} Hz"
+            ]
+            
+            for i, text in enumerate(status_text):
+                y_pos = 50 + i*18  # Tighter spacing for more info
+                
+                # Color coding for different types of information
+                if i == 0:  # Header - NO CONTROL warning
+                    color = (0, 0, 255)  # Red for warning
+                elif i == 1:  # ROS2 topics
+                    color = (255, 255, 0)  # Yellow for ROS2 info
+                elif i == 2:  # Lap counter
+                    color = (0, 255, 0)  # Green for lap counter
+                elif i == 3:  # YOLO detections
+                    color = (255, 0, 255)  # Magenta for YOLO
+                elif i == 4:  # Current speed (display only)
+                    color = (0, 255, 255)  # Cyan for current speed
+                elif i == 5 or i == 6:  # Target commands (ROS2)
+                    color = (255, 255, 0)  # Yellow for ROS2 commands
+                elif i == 7:  # Turn type
+                    color = (255, 0, 255)  # Magenta for turn type
+                elif i == 8:  # Track confidence
+                    color = (0, 255, 0) if self.controller.planning_state['track_confidence'] > 0.7 else (255, 255, 0) if self.controller.planning_state['track_confidence'] > 0.4 else (255, 0, 0)
+                elif i == 9:  # Path curvature (ROS2)
+                    color = (255, 255, 0)  # Yellow for ROS2 data
+                elif i == 10:  # Visibility risk
+                    risk = self.controller.planning_state['cone_visibility_risk']
+                    color = (255, 0, 0) if risk >= 2.0 else (255, 255, 0) if risk >= 1.0 else (0, 255, 0)
+                elif i == 11:  # Physics constraints
+                    color = (0, 255, 0) if self.controller.physics_constraints_enabled else (255, 0, 0)
+                elif i == 12:  # PID info
+                    color = (0, 255, 0) if self.controller.pid_enabled else (255, 0, 0)
+                elif i == 14:  # Lost track counter
+                    color = (255, 0, 0) if self.controller.lost_track_counter > 10 else (0, 255, 0)
+                elif i == 15:  # Planning frequency
+                    color = (255, 255, 0)  # Yellow for system info
+                else:
+                    color = (255, 255, 255)  # White for other info
+                
+                cv2.putText(viz_image, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+            
+        except Exception as e:
+            self.get_logger().error(f"Error adding ROS2 status overlay: {e}")
+    
+    def run(self):
+        """Main execution function with ROS2 integration (NO CARLA CONTROL)"""
         try:
             # Setup CARLA
             if not self.setup_carla():
                 return False
             
             # Setup camera and controller
-            if not self.setup_camera_and_controller(model_path):
+            if not self.setup_camera_and_controller():
                 return False
             
-            print("System ready! Using existing vehicle for gate racing with robust control.")
-            print(f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id})")
-            print(f"Target: {self.controller.target_gates} gates")
-            print("Press Ctrl+C to stop or 'q' in the display window")
+            self.get_logger().info("🚫 ROS2 CARLA Planning System ready! NO CARLA CONTROL - ROS2 topics only")
+            self.get_logger().info(f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id}) - SENSING ONLY")
+            self.get_logger().info("🟠 Orange cones will be detected for lap counting")
+            self.get_logger().info("📡 Publishing ROS2 topics: /target_speed, /target_steering, /path_curvature, /turn_type")
+            self.get_logger().info("🎯 YOLO bounding boxes will be displayed in visualization")
+            self.get_logger().info("Press Ctrl+C to stop or 'q' in the display window")
             
-            # Start threads
-            self.control_thread = threading.Thread(target=self.control_loop)
-            self.display_thread = threading.Thread(target=self.display_loop)
+            # Start display thread if visualization enabled
+            if self.show_visualization:
+                self.display_thread = threading.Thread(target=self.display_loop)
+                self.display_thread.start()
             
-            self.control_thread.start()
-            self.display_thread.start()
-            
-            # Wait for threads to complete
-            self.control_thread.join()
-            self.display_thread.join()
+            # ROS2 timer handles the planning loop, so we just spin
+            try:
+                rclpy.spin(self)
+            except KeyboardInterrupt:
+                self.get_logger().info("Received keyboard interrupt")
             
             return True
             
         except Exception as e:
-            print(f"Error running system: {e}")
+            self.get_logger().error(f"Error running ROS2 planning system: {e}")
             return False
         finally:
             self.cleanup()
     
     def cleanup(self):
-        """Clean up all resources without destroying the existing vehicle"""
-        print("Cleaning up resources...")
+        """Clean up all resources without affecting the existing vehicle"""
+        self.get_logger().info("Cleaning up ROS2 CARLA Planning System...")
         
         self.running = False
         
-        # Stop vehicle but don't destroy it since it was pre-existing
-        if self.vehicle:
-            try:
-                control = carla.VehicleControl()
-                control.steer = 0.0
-                control.throttle = 0.0
-                control.brake = 1.0
-                self.vehicle.apply_control(control)
-                print("Vehicle stopped (not destroyed - was pre-existing)")
-                time.sleep(1.0)
-            except:
-                pass
+        # NO VEHICLE CONTROL - just log the final state
+        self.get_logger().info("🚫 NO CARLA CONTROL performed - vehicle unaffected")
         
-        # Cleanup controller (including speed logger)
+        # Print final lap count
+        if self.controller and hasattr(self.controller, 'lap_counter'):
+            self.get_logger().info(f"🏁 Final lap count: {self.controller.lap_counter.laps_completed} laps completed")
+        
+        # Print final planning state
         if self.controller:
-            try:
-                self.controller.cleanup()
-            except:
-                pass
+            self.get_logger().info(f"📊 Final planning state:")
+            self.get_logger().info(f"   Target Speed: {self.controller.planning_state['target_speed']:.2f} m/s")
+            self.get_logger().info(f"   Target Steering: {self.controller.planning_state['target_steering']:.3f}")
+            self.get_logger().info(f"   Track Confidence: {self.controller.planning_state['track_confidence']:.2f}")
+            self.get_logger().info(f"   Distance Traveled: {self.controller.distance_traveled:.1f}m")
+        
+        # Wait for display thread to finish
+        if self.display_thread and self.display_thread.is_alive():
+            self.display_thread.join(timeout=2.0)
         
         # Cleanup camera
         if self.camera:
@@ -1408,43 +1747,40 @@ class CarlaGateRacingSystem:
             except:
                 pass
         
-        # NOTE: We don't destroy the vehicle since it was already in the world
-        # The vehicle will remain for other uses
-        
         # Close CV2 windows
         try:
             cv2.destroyAllWindows()
         except:
             pass
         
-        print("Cleanup complete - existing vehicle preserved")
+        self.get_logger().info("🚫 ROS2 CARLA Planning System cleanup complete - vehicle preserved and uncontrolled")
 
 
-def main():
-    """Main function"""
-    if len(sys.argv) > 1:
-        model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
-        print(f"Using YOLO model: {model_path}")
-    else:
-        # Default model path based on your structure
-        model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
-        print(f"Using default YOLO model: {model_path}")
-    
-    # Create and run the robust racing system with existing vehicle
-    racing_system = CarlaGateRacingSystem()
+def main(args=None):
+    """Main function with ROS2 integration"""
+    rclpy.init(args=args)
     
     try:
-        success = racing_system.run(model_path)
+        # Create and run the enhanced planning system with ROS2 interface (NO CARLA CONTROL)
+        planning_system = CarlaRacingSystem()
+        
+        success = planning_system.run()
         if success:
-            print("Robust gate racing system completed successfully")
+            planning_system.get_logger().info("🚫 ROS2 CARLA Planning system completed successfully - NO CARLA CONTROL")
         else:
-            print("Robust gate racing system failed to start")
+            planning_system.get_logger().error("ROS2 CARLA Planning system failed to start")
+            
     except KeyboardInterrupt:
         print("\nReceived interrupt signal")
     except Exception as e:
         print(f"Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        racing_system.cleanup()
+        try:
+            rclpy.shutdown()
+        except:
+            pass
 
 
 if __name__ == "__main__":
