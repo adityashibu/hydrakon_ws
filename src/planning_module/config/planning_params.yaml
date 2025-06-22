@@ -1,475 +1,82 @@
-# carla_racing_params.yaml
-# Enhanced CARLA Racing System Parameters with ROS2 Interface
-# 🚫 NO CARLA CONTROL - ROS2 Topics Only
+# CARLA Racing System Parameters - Corrected Version
+# Node name must match the name used in launch file
 
-carla_racing_controller:
+planning_node:  # This matches the name used in launch file
   ros__parameters:
     
-    # ===========================================
-    # BASIC PLANNING PARAMETERS
-    # ===========================================
-    max_speed: 8.0                    # Maximum target speed (m/s)
-    min_speed: 2.0                    # Minimum target speed (m/s)
-    wheelbase: 2.7                    # Vehicle wheelbase (m)
-    lookahead_distance: 4.0           # Base lookahead distance (m)
-    control_frequency: 20.0           # Planning frequency (Hz)
-    
-    # ===========================================
-    # PID INTEGRATION PARAMETERS (ROS2 TOPICS ONLY)
-    # ===========================================
-    pid_enabled: true                 # Enable PID information publishing
-    # Published topics: /target_speed, /target_steering, /path_curvature, /current_lookahead, /turn_type
-    
-    # ===========================================
-    # VISUALIZATION PARAMETERS
-    # ===========================================
-    show_visualization: true          # Enable real-time visualization window with YOLO boxes
-    
-    # ===========================================
-    # PHYSICS CONSTRAINTS (LOOSENED FOR PID INTEGRATION)
-    # ===========================================
-    # These constraints apply to the planning commands before publishing to ROS2
-    # Your PID controller should have its own constraints as well
-    physics_constraints_enabled: false # Enable physics-based constraint checking
-    max_steering_at_speed: false       # Enable speed-dependent steering limits
-    coordinated_speed_steering: false  # Enable coordinated speed-steering commands
-    
-    # Physics constraint thresholds (loosened since PID already has constraints)
-    high_speed_threshold: 4.0         # High speed threshold (m/s) - was 3.0
-    medium_speed_threshold: 2.0       # Medium speed threshold (m/s) - was 1.5
-    max_steering_high_speed: 0.4      # Max steering at high speed - was 0.3
-    max_steering_medium_speed: 0.7    # Max steering at medium speed - was 0.6
-    max_steering_low_speed: 1.0       # Max steering at low speed
-    
-    # Rate limiting (loosened for ROS2 publishing)
-    max_steering_change_per_cycle: 0.3 # Max steering change per cycle - was 0.2
-    physics_warning_interval: 2.0     # Warning interval (s) - was 1.0
-    max_consecutive_sharp_turns: 5    # Max consecutive sharp turns - was 3
-    
-    # Emergency coordination (loosened for external PID)
-    speed_steering_base: 2.5          # Base speed for steering calc - was 2.0
-    speed_steering_range: 5.0         # Speed range - was 4.0
-    emergency_speed_tolerance: 1.5    # Speed tolerance - was 1.0
-    
-    # ===========================================
-    # PURE PURSUIT PARAMETERS
-    # ===========================================
-    safety_offset: 0.5                # Safety margin from cones (m)
-    max_depth: 8.0                    # Maximum cone detection range (m)
-    min_depth: 1.5                    # Minimum cone detection range (m)
-    max_lateral_distance: 4.0         # Maximum lateral cone distance (m)
-    min_turn_radius: 3.5              # Minimum safe turning radius (m)
-    path_widening_factor: 1.8         # Path widening multiplier for turns
-    sharp_turn_threshold: 25.0        # Sharp turn angle threshold (degrees)
-    u_turn_threshold: 60.0            # U-turn angle threshold (degrees)
-    turn_detection_distance: 6.0      # Turn lookahead distance (m)
-    
-    # ===========================================
-    # TRACK FOLLOWING PARAMETERS
-    # ===========================================
-    track_width_min: 3.0              # Minimum valid track width (m)
-    track_width_max: 5.0              # Maximum valid track width (m)
-    max_depth_diff: 1.0               # Max depth difference between track cones (m)
-    max_lateral_jump: 1.5             # Max lateral movement between segments (m)
-    forward_focus_angle: 30.0         # Forward focus cone angle (degrees)
-    
-    # ===========================================
-    # LOST TRACK HANDLING PARAMETERS
-    # ===========================================
-    max_lost_track_frames: 20         # Frames before search pattern
-    
-    # Recovery patterns (published as ROS2 commands, not executed directly)
-    recovery_steering_gain: 1.5       # Gain for recovery steering
-    search_steering_amplitude: 0.3    # Search pattern amplitude
-    search_steering_frequency: 0.1    # Search pattern frequency
-    aggressive_search_amplitude: 0.6  # Aggressive search amplitude
-    aggressive_search_frequency: 0.3  # Aggressive search frequency
-    last_resort_search_amplitude: 0.8 # Last resort search amplitude
-    last_resort_search_frequency: 0.2 # Last resort search frequency
-    
-    # Recovery speeds (published to ROS2, not executed)
-    recovery_speed: 0.2               # Speed during recovery
-    search_speed: 0.15                # Speed during search
-    aggressive_search_speed: 0.15     # Speed during aggressive search
-    last_resort_speed: 0.1            # Speed during last resort search
-    
-    # ===========================================
-    # CONE DETECTION PROCESSING PARAMETERS
-    # ===========================================
-    # Image processing parameters for YOLO visualization
-    image_width: 1280
-    image_height: 720
-    fov_horizontal: 90.0              # Camera horizontal FOV (degrees)
-    
-    # Orange cone detection (lap markers)
-    orange_cone_depth_min: 1.0        # Min depth for orange cones (m)
-    orange_cone_depth_max: 15.0       # Max depth for orange cones (m)
-    orange_cone_lateral_max: 8.0      # Max lateral distance for orange cones (m)
-    orange_cone_angle_max: 60.0       # Max angle for orange cones (degrees)
-    
-    # Blue/Yellow cone filtering
-    blue_yellow_cone_right_threshold: 1.0  # Blue cone right limit (m)
-    yellow_blue_cone_left_threshold: -1.0  # Yellow cone left limit (m)
-    
-    # ===========================================
-    # LAP COUNTER PARAMETERS
-    # ===========================================
-    lap_cooldown_duration: 3.0        # Cooldown between lap counts (s)
-    orange_gate_passed_threshold: 2.0 # Distance threshold for orange gate (m)
-    
-    # Orange gate validation
-    orange_gate_depth_diff_max: 3.0   # Max depth diff for orange gate (m)
-    orange_gate_width_min: 1.5        # Min orange gate width (m)
-    orange_gate_width_max: 12.0       # Max orange gate width (m)
-    orange_gate_max_distance: 15.0    # Max distance to orange gate (m)
-    single_orange_cone_threshold: 3.0 # Distance for single orange cone lap (m)
-    
-    # ===========================================
-    # PLANNING STATE PARAMETERS (FOR ROS2 PUBLISHING)
-    # ===========================================
-    initial_track_confidence: 1.0     # Initial confidence value
-    min_track_confidence: 0.1         # Minimum confidence value
-    max_track_confidence: 1.0         # Maximum confidence value
-    confidence_increment: 0.1         # Confidence increase per good cycle
-    confidence_decrement: 0.1         # Confidence decrease per poor cycle
-    
-    # Turn type classification (published to /turn_type topic)
-    straight_turn_type: 0.0           # Numeric code for straight
-    gentle_turn_type: 1.0             # Numeric code for gentle turn
-    sharp_turn_type: 2.0              # Numeric code for sharp turn
-    u_turn_type: 3.0                  # Numeric code for u-turn
-    
-    # ===========================================
-    # ADAPTIVE BEHAVIOR PARAMETERS
-    # ===========================================
-    # Speed factors for different turn types (for ROS2 /target_speed)
-    straight_speed_factor: 1.0        # Speed factor for straight sections
-    gentle_speed_factor: 0.8          # Speed factor for gentle turns
-    sharp_speed_factor: 0.6           # Speed factor for sharp turns
-    u_turn_speed_factor: 0.4          # Speed factor for u-turns
-    
-    # Additional speed factors
-    steering_speed_reduction: 0.7     # Steering-based speed reduction factor
-    distance_speed_factor_near: 0.7   # Speed factor when close (< 6m)
-    distance_speed_factor_very_near: 0.5 # Speed factor when very close (< 3m)
-    confidence_speed_threshold: 0.7   # Confidence threshold for speed reduction
-    low_confidence_speed_factor: 0.8  # Speed factor for low confidence
-    minimum_speed_factor: 0.7         # Minimum speed factor
-    
-    # ===========================================
-    # STEERING SMOOTHING PARAMETERS (FOR ROS2 /target_steering)
-    # ===========================================
-    steering_history_length: 5        # Number of steering values to keep
-    
-    # Smoothing weights for different conditions
-    normal_smoothing_weights: [0.5, 0.3, 0.2]         # Normal conditions
-    moderate_risk_smoothing_weights: [0.6, 0.25, 0.15] # Moderate visibility risk
-    high_risk_smoothing_weights: [0.7, 0.2, 0.1]      # High visibility risk
-    
-    # Rate limiting parameters
-    normal_steering_rate_limit: 0.15     # Normal steering rate limit
-    moderate_risk_rate_limit: 0.2        # Moderate risk rate limit
-    high_risk_rate_limit: 0.25           # High risk rate limit
-    sharp_turn_rate_limit: 0.18          # Sharp turn rate limit
-    
-    # Visibility thresholds
-    moderate_visibility_risk_threshold: 1.8  # Moderate risk threshold (m)
-    high_visibility_risk_threshold: 2.5     # High risk threshold (m)
-    low_confidence_threshold: 0.8           # Low confidence threshold
-    very_low_confidence_threshold: 0.5      # Very low confidence threshold
-    
-    # ===========================================
-    # PURE PURSUIT CALCULATION PARAMETERS
-    # ===========================================
-    # Lookahead adaptation (for /current_lookahead topic)
-    min_adaptive_lookahead: 2.0       # Minimum adaptive lookahead (m)
-    max_adaptive_lookahead: 6.0       # Maximum adaptive lookahead (m)
-    sharp_turn_lookahead_factor: 0.7  # Lookahead reduction for sharp turns
-    gentle_turn_lookahead_factor: 0.85 # Lookahead reduction for gentle turns
-    
-    # Visibility risk factors
-    moderate_visibility_risk_factor: 1.2  # Steering aggressiveness increase
-    high_visibility_risk_factor: 1.4      # Steering aggressiveness increase
-    
-    # Steering enhancement
-    visibility_steering_boost_threshold: 1.5  # Threshold for steering boost (m)
-    visibility_steering_boost_factor: 0.6     # Steering boost factor
-    final_steering_boost_threshold: 2.0       # Final boost threshold (m)
-    final_steering_boost_min: 0.4             # Min steering for final boost
-    final_steering_boost_factor: 0.3          # Final boost factor
-    
-    # Steering limits
-    max_steering_degrees: 30.0         # Maximum steering angle (degrees)
-    
-    # ===========================================
-    # TRACK SEGMENT FINDING PARAMETERS
-    # ===========================================
-    blue_candidates_count: 3          # Number of blue cone candidates to consider
-    yellow_candidates_count: 3        # Number of yellow cone candidates to consider
-    segment_centerline_threshold: 2.0 # Max distance from centerline (m)
-    segment_score_centerline_penalty: 3.0 # Penalty factor for off-center segments
-    
-    # ===========================================
-    # CONE LINE FOLLOWING PARAMETERS (FALLBACK)
-    # ===========================================
-    cone_line_depth_threshold: 5.0    # Max depth for cone line following (m)
-    cone_line_lateral_threshold: 3.0  # Max lateral distance for cone line (m)
-    cone_line_offset_blue: 1.5        # Offset from blue cone (m)
-    cone_line_offset_yellow: -1.5     # Offset from yellow cone (m)
-    cone_line_max_target_lateral: 3.0 # Max lateral target for cone line (m)
-    cone_line_assumed_width: 3.0      # Assumed track width for cone line (m)
-    
-    # ===========================================
-    # TARGET ADJUSTMENT PARAMETERS
-    # ===========================================
-    # Path offset multipliers
-    gentle_turn_path_offset: 0.3      # Path offset for gentle turns
-    sharp_turn_path_offset: 0.6       # Path offset for sharp turns
-    u_turn_path_offset: 1.0           # Path offset for u-turns
-    
-    # Forward offsets
-    sharp_turn_forward_offset: 0.5    # Forward offset for sharp turns (m)
-    u_turn_forward_offset: 1.0        # Forward offset for u-turns (m)
-    
-    # ===========================================
-    # DEBUG AND LOGGING PARAMETERS
-    # ===========================================
-    debug_logging_enabled: true       # Enable debug logging
-    debug_cone_filtering: true         # Debug cone filtering
-    debug_track_segments: true         # Debug track segment finding
-    debug_turn_detection: true         # Debug turn detection
-    debug_steering_calculation: true   # Debug steering calculation
-    debug_physics_constraints: true    # Debug physics constraints
-    debug_ros2_publishing: true        # Debug ROS2 topic publishing
-    
-    # Logging frequencies
-    debug_log_frequency: 1.0          # Debug log frequency (Hz)
-    status_log_frequency: 1.0         # Status log frequency (Hz)
-    
-    # Performance monitoring
-    performance_monitoring_enabled: true # Enable performance monitoring
-    performance_log_frequency: 0.2    # Performance log frequency (Hz)
-
-carla_racing_system:
-  ros__parameters:
-    
-    # ===========================================
-    # SYSTEM PARAMETERS (NO CARLA CONTROL)
-    # ===========================================
-    model_path: '/home/legion5/hydrakon_ws/src/planning_module/planning_module/best.pt'
-    show_visualization: true          # Enable visualization window with YOLO boxes
-    control_frequency: 20.0           # Planning loop frequency (Hz) - publishes ROS2 topics
-    
-    # ===========================================
-    # CARLA CONNECTION PARAMETERS (SENSING ONLY)
-    # ===========================================
-    carla_host: "localhost"           # CARLA host address
-    carla_port: 2000                  # CARLA port number
-    carla_timeout: 10.0               # CARLA connection timeout (s)
-    # NOTE: Vehicle is used for sensing only (camera, position, velocity) - NO CONTROL
-    
-    # ===========================================
-    # YOLO VISUALIZATION PARAMETERS
-    # ===========================================
-    visualization_fps: 30            # Visualization frame rate
-    window_title: "ROS2 CARLA Planning - YOLO Detection & Lap Counter (NO CARLA CONTROL)"
-    
-    # YOLO detection visualization
-    yolo_box_thickness: 2             # Thickness of YOLO bounding boxes
-    yolo_text_scale: 0.5              # Font scale for YOLO labels
-    yolo_text_thickness: 1            # Font thickness for YOLO labels
-    yolo_center_point_radius: 3       # Radius of center point markers
-    
-    # Class-specific colors (BGR format)
-    blue_cone_color: [255, 0, 0]      # Blue color for blue cones
-    yellow_cone_color: [0, 255, 255]  # Cyan color for yellow cones
-    orange_cone_color: [0, 165, 255]  # Orange color for orange cones
-    unknown_cone_color: [255, 255, 255] # White for unknown classes
-    
-    # YOLO label background
-    label_background_alpha: 1.0       # Opacity of label background
-    label_text_color: [0, 0, 0]       # Black text on colored background
-    label_padding: 10                 # Padding for label background
-    
-    # ===========================================
-    # PLANNING VISUALIZATION PARAMETERS
-    # ===========================================
-    # Status display configuration
-    status_line_spacing: 18           # Pixel spacing between status lines
-    status_font_scale: 0.45           # Font scale for status text
-    status_font_thickness: 1          # Font thickness for status text
-    
-    # ROS2 status color coding (BGR format)
-    color_no_control_warning: [0, 0, 255]    # Red for NO CONTROL warning
-    color_ros2_topics: [255, 255, 0]         # Yellow for ROS2 topic info
-    color_lap_counter: [0, 255, 0]           # Green for lap counter
-    color_yolo_detections: [255, 0, 255]     # Magenta for YOLO detection counts
-    color_current_speed: [255, 255, 0]       # Cyan for current speed (display only)
-    color_target_commands: [255, 255, 0]     # Yellow for ROS2 target commands
-    color_turn_type: [255, 0, 255]           # Magenta for turn type
-    color_track_confidence_good: [0, 255, 0]    # Green for good confidence
-    color_track_confidence_medium: [0, 255, 255] # Yellow for medium confidence
-    color_track_confidence_poor: [0, 0, 255]     # Red for poor confidence
-    color_ros2_data: [255, 255, 0]           # Yellow for ROS2 published data
-    color_visibility_risk_low: [0, 255, 0]       # Green for low risk
-    color_visibility_risk_medium: [0, 255, 255]  # Yellow for medium risk
-    color_visibility_risk_high: [0, 0, 255]      # Red for high risk
-    color_physics_on: [0, 255, 0]            # Green when physics constraints on
-    color_physics_off: [0, 0, 255]           # Red when physics constraints off
-    color_lost_track_good: [0, 255, 0]       # Green when tracking well
-    color_lost_track_poor: [0, 0, 255]       # Red when lost track
-    color_system_info: [255, 255, 0]         # Yellow for system information
-    
-    # Planning target visualization
-    target_circle_radius: 15          # Radius for target circle
-    target_border_thickness: 2        # Thickness of target border
-    target_text_offset_x: 20          # X offset for target text
-    target_text_offset_y: 0           # Y offset for target text
-    target_font_scale: 0.7            # Font scale for target text
-    target_font_thickness: 2          # Font thickness for target text
-    
-    # Target colors for different types
-    track_target_color: [0, 0, 255]   # Red for track segment target
-    cone_line_target_color: [255, 0, 255] # Magenta for cone line target
-    target_border_color: [255, 255, 255]  # White border for targets
-    
-    # Track line visualization
-    track_line_thickness: 4           # Thickness for track line between cones
-    track_line_color: [0, 255, 0]     # Green for track line
-    cone_marker_radius: 8             # Radius for cone position markers
-    
-    # Orange cone lap markers
-    orange_marker_radius: 12          # Radius for orange cone markers
-    orange_marker_border_thickness: 2 # Border thickness for orange cones
-    orange_marker_border_color: [255, 255, 255] # White border for orange markers
-    orange_lap_text_color: [255, 255, 255]      # White text for "LAP"
-    orange_distance_text_color: [0, 165, 255]   # Orange text for distance
-    
-    # ===========================================
-    # ROS2 TOPIC PUBLISHING PARAMETERS
-    # ===========================================
-    # Topic names (should match your PID controller expectations)
-    target_speed_topic: "/target_speed"           # Target speed topic
-    target_steering_topic: "/target_steering"     # Target steering topic
-    path_curvature_topic: "/path_curvature"       # Path curvature topic
-    current_lookahead_topic: "/current_lookahead" # Current lookahead topic
-    turn_type_topic: "/turn_type"                 # Turn type topic
-    
-    # Topic queue sizes
-    command_topic_queue_size: 10      # Queue size for command topics
-    info_topic_queue_size: 10         # Queue size for information topics
-    
-    # Publishing rates
-    command_publish_rate: 20.0        # Rate for command topics (Hz)
-    info_publish_rate: 20.0           # Rate for information topics (Hz)
-    
-    # ===========================================
-    # SUBSCRIBER PARAMETERS (SENSING ONLY)
-    # ===========================================
-    # Topics for situational awareness (no feedback control)
-    current_speed_topic: "/current_speed"    # Current speed topic (for display)
-    imu_topic: "/carla/imu_sensor"           # IMU topic (for planning calculations)
-    
-    # Subscriber queue sizes
-    sensor_topic_queue_size: 10       # Queue size for sensor topics
-    
-    # ===========================================
-    # THREADING PARAMETERS
-    # ===========================================
-    planning_loop_enabled: true       # Enable ROS2 timer-based planning loop
-    display_loop_enabled: true        # Enable visualization display loop
-    
-    # Threading configuration
-    display_loop_sleep: 0.033         # Sleep time in display loop (s) - 30 FPS
-    error_recovery_sleep: 0.1         # Sleep time after errors (s)
-    shutdown_timeout: 2.0             # Timeout for thread shutdown (s)
-    
-    # ===========================================
-    # ERROR HANDLING PARAMETERS
-    # ===========================================
-    max_consecutive_errors: 5         # Max consecutive errors before shutdown
-    error_recovery_delay: 1.0         # Delay after error recovery (s)
-    ros2_publish_timeout: 1.0         # Timeout for ROS2 publishing (s)
-    
-    # Fallback behavior when planning fails
-    fallback_target_speed: 0.0        # Fallback target speed (m/s)
-    fallback_target_steering: 0.0     # Fallback target steering
-    
-    # ===========================================
-    # CAMERA INTEGRATION PARAMETERS
-    # ===========================================
-    # ZED 2i camera configuration (for YOLO detection)
-    camera_resolution_width: 1280
-    camera_resolution_height: 720
-    camera_fps: 30
-    camera_fov: 90.0
-    
-    # YOLO model parameters
-    yolo_confidence_threshold: 0.25   # Minimum confidence for detections
-    yolo_nms_threshold: 0.45          # Non-maximum suppression threshold
-    yolo_max_detections: 100          # Maximum detections per frame
-    
-    # ===========================================
-    # PERFORMANCE MONITORING PARAMETERS
-    # ===========================================
-    # Performance metrics
-    performance_monitoring_enabled: true # Enable performance monitoring
-    performance_log_frequency: 0.2    # Performance log frequency (Hz)
-    
-    # Timing thresholds
-    planning_cycle_warning_threshold: 0.1  # Warning if planning takes > 100ms
-    ros2_publish_warning_threshold: 0.01   # Warning if publishing takes > 10ms
-    yolo_processing_warning_threshold: 0.05 # Warning if YOLO takes > 50ms
-    
-    # Memory monitoring
-    memory_monitoring_enabled: false  # Enable memory usage monitoring
-    memory_log_frequency: 0.1         # Memory log frequency (Hz)
-    memory_warning_threshold: 80.0    # Warning if memory usage > 80%
-    
-    # ===========================================
-    # SIMULATION INTEGRATION PARAMETERS
-    # ===========================================
-    # Vehicle sensing parameters (NO CONTROL)
-    vehicle_sensing_enabled: true     # Enable vehicle state sensing
-    position_update_frequency: 20.0   # Position update frequency (Hz)
-    velocity_update_frequency: 20.0   # Velocity update frequency (Hz)
-    
-    # Distance tracking
-    distance_tracking_enabled: true   # Enable distance traveled tracking
-    distance_reset_on_startup: false  # Reset distance counter on startup
-    
-    # World state monitoring
-    world_monitoring_enabled: true    # Enable CARLA world state monitoring
-    actor_monitoring_enabled: false   # Enable actor monitoring (can be resource intensive)
-    
-    # ===========================================
-    # COORDINATE SYSTEM PARAMETERS
-    # ===========================================
-    # Camera coordinate transformations
-    camera_to_vehicle_transform_enabled: true  # Enable coordinate transformation
-    
-    # World coordinate system
-    world_coordinate_system: "carla"   # Coordinate system: "carla", "ros", "custom"
-    
-    # Depth calculation parameters
-    depth_calculation_method: "euclidean"  # "euclidean", "manhattan", "z_only"
-    depth_smoothing_enabled: false     # Enable depth smoothing
-    depth_smoothing_factor: 0.1        # Smoothing factor for depth
-    
-    # ===========================================
-    # SAFETY PARAMETERS (ROS2 COMMAND LIMITS)
-    # ===========================================
-    # Command safety limits before publishing to ROS2
-    max_published_speed: 10.0         # Maximum speed to publish (m/s)
-    min_published_speed: 0.0          # Minimum speed to publish (m/s)
-    max_published_steering: 1.0       # Maximum steering to publish (normalized)
-    min_published_steering: -1.0      # Minimum steering to publish (normalized)
-    
-    # Command validation
-    command_validation_enabled: true   # Enable command validation before publishing
-    nan_command_replacement_enabled: true # Replace NaN commands with safe values
-    infinite_command_replacement_enabled: true # Replace infinite commands with safe values
-    
-    # Safe command replacements
-    safe_replacement_speed: 0.0       # Safe speed if invalid command detected
-    safe_replacement_steering: 0.0    # Safe steering if invalid command detected
+    # Vehicle parameters
+    vehicle:
+      wheelbase: 2.7                    # meters
+      max_steering_degrees: 30.0        # degrees
+    
+   # Control parameters
+    control:
+      max_speed: 15.0 # m/s
+      min_speed: 7.0 # m/s
+      lookahead_distance: 4.0 # Pure pursuit lookahead distance in meters
+    # Camera parameters
+    camera:
+      fov_horizontal: 110.0             # degrees - ZED 2i FOV
+      resolution_width: 1280            # pixels
+      resolution_height: 720            # pixels
+      fps: 30                          # frames per second
+    
+    # Detection parameters
+    detection:
+      safety_offset: 0.5                # meters from cones
+      max_depth: 8.0                    # maximum cone detection range
+      min_depth: 1.5                    # minimum cone detection range
+      max_lateral_distance: 4.0         # maximum lateral distance from vehicle center
+    
+    # Turn parameters
+    turns:
+      min_turn_radius: 3.5              # minimum safe turning radius (meters)
+      path_widening_factor: 1.8         # how much to widen the path in turns
+      sharp_turn_threshold: 25.0        # angle threshold for sharp turns (degrees)
+      u_turn_threshold: 60.0            # angle threshold for U-turns (degrees)
+      turn_detection_distance: 6.0      # distance to look ahead for turn detection
+    
+    # Track parameters
+    track:
+      width_min: 3.0                    # minimum track width (meters)
+      width_max: 5.0                    # maximum track width (meters)
+      max_depth_diff: 1.0               # maximum depth difference between gate cones
+      max_lateral_jump: 1.5             # maximum lateral movement between consecutive gates
+      forward_focus_angle: 30.0         # only consider cones within this angle (degrees)
+    
+    # Visibility parameters
+    visibility:
+      high_risk_threshold: 2.5          # high risk threshold for cone visibility
+      moderate_risk_threshold: 1.8      # moderate risk threshold for cone visibility
+      visibility_steering_boost: 0.6    # steering boost factor for cone visibility preservation
+      high_risk_factor: 1.4             # high risk steering factor multiplier
+      moderate_risk_factor: 1.2         # moderate risk steering factor multiplier
+    
+    # Recovery parameters
+    recovery:
+      max_lost_track_frames: 20         # maximum frames before triggering emergency stop
+      recovery_steering_multiplier: 1.5 # steering multiplier for track recovery
+      aggressive_search_amplitude: 18.0 # amplitude for aggressive search pattern (degrees)
+      wide_search_amplitude: 24.0       # amplitude for wide search pattern (degrees)
+    
+    # Lap counter parameters
+    lap_counter:
+      cooldown_duration: 3.0            # cooldown duration between lap counts (seconds)
+      orange_gate_threshold: 2.0        # distance threshold for passing through orange gate
+    
+    # System parameters
+    system:
+      control_loop_hz: 20.0             # control loop frequency (Hz)
+      display_loop_hz: 30.0             # display loop frequency (Hz)
+      enable_visualization: true        # enable OpenCV visualization window
+    
+    # CARLA connection parameters
+    carla:
+      host: "localhost"                 # CARLA server host address
+      port: 2000                        # CARLA server port number
+      timeout: 10.0                     # CARLA connection timeout (seconds)
+    
+    # Debug parameters
+    debug:
+      enable_debug_output: true         # enable debug console output
+      log_level: "INFO"                 # ROS logging level (DEBUG, INFO, WARN, ERROR)
