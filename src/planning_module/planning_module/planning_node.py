@@ -24,7 +24,7 @@ class LapCounter:
         self.cooldown_duration = 3.0  # 3 seconds cooldown between lap counts
         self.orange_gate_passed_threshold = 2.0  # Distance threshold for passing through orange gate
         
-        # NEW: Lap timing functionality
+        # Lap timing functionality
         self.race_start_time = time.time()
         self.lap_start_time = time.time()
         self.lap_times = []  # Store individual lap times
@@ -32,7 +32,7 @@ class LapCounter:
         self.best_lap_time = float('inf')
         self.last_lap_time = 0.0
         
-        # NEW: Turn tracking for each lap
+        # Turn tracking for each lap
         self.current_lap_turns = {
             'straight': 0,
             'gentle': 0,
@@ -43,6 +43,22 @@ class LapCounter:
         self.turn_change_cooldown = 1.0  # 1 second cooldown to prevent rapid turn type changes
         self.last_turn_change_time = 0
         
+        # NEW: Speed tracking for each lap
+        self.current_lap_speeds = []  # Store speeds during current lap
+        self.lap_speed_data = []  # Store speed statistics for each completed lap
+        self.speed_sample_interval = 0.5  # Sample speed every 0.5 seconds
+        self.last_speed_sample_time = 0
+        
+    def record_speed(self, speed_ms):
+        """Record speed sample for current lap"""
+        current_time = time.time()
+        
+        # Sample speed at regular intervals
+        if current_time - self.last_speed_sample_time >= self.speed_sample_interval:
+            speed_kmh = speed_ms * 3.6  # Convert m/s to km/h
+            self.current_lap_speeds.append(speed_kmh)
+            self.last_speed_sample_time = current_time
+            
     def record_turn(self, turn_type):
         """Record a turn for the current lap"""
         current_time = time.time()
@@ -89,7 +105,9 @@ class LapCounter:
             'lap_times': self.lap_times.copy(),
             'average_lap': sum(self.lap_times) / len(self.lap_times) if self.lap_times else 0.0,
             'lap_turn_data': self.lap_turn_data.copy(),
-            'current_lap_turns': self.current_lap_turns.copy()
+            'current_lap_turns': self.current_lap_turns.copy(),
+            'lap_speed_data': self.lap_speed_data.copy(),
+            'current_lap_speeds': self.current_lap_speeds.copy()
         }
         
         return stats
@@ -158,13 +176,34 @@ class LapCounter:
                 self.last_orange_gate_time = current_time
                 return  # Exit without counting this lap
             
-            # Valid lap - record the lap time and turn data
+            # Valid lap - record the lap time, turn data, and speed data
             self.lap_times.append(lap_time)
             self.last_lap_time = lap_time
             
             # Record turn data for this lap
             lap_turn_summary = self.current_lap_turns.copy()
             self.lap_turn_data.append(lap_turn_summary)
+            
+            # NEW: Record speed data for this lap
+            if self.current_lap_speeds:
+                speed_stats = {
+                    'max_speed': max(self.current_lap_speeds),
+                    'min_speed': min(self.current_lap_speeds),
+                    'avg_speed': np.mean(self.current_lap_speeds),
+                    'std_speed': np.std(self.current_lap_speeds),
+                    'speed_samples': len(self.current_lap_speeds)
+                }
+                self.lap_speed_data.append(speed_stats)
+                print(f"   Speed Summary: Avg:{speed_stats['avg_speed']:.1f} km/h, Max:{speed_stats['max_speed']:.1f} km/h")
+            else:
+                # Fallback if no speed data collected
+                self.lap_speed_data.append({
+                    'max_speed': 0,
+                    'min_speed': 0, 
+                    'avg_speed': 0,
+                    'std_speed': 0,
+                    'speed_samples': 0
+                })
             
             # Update best lap time
             if lap_time < self.best_lap_time:
@@ -179,12 +218,13 @@ class LapCounter:
                 avg_time = sum(self.lap_times) / len(self.lap_times)
                 print(f"   Average: {self.format_time(avg_time)}")
             
-            # Reset turn counter for next lap
+            # Reset counters for next lap
             self.current_lap_turns = {
                 'straight': 0,
                 'gentle': 0,
                 'sharp': 0
             }
+            self.current_lap_speeds = []  # Reset speed tracking
             
             # Only restart lap timing for valid laps
             self.lap_start_time = current_time
@@ -261,7 +301,7 @@ class PurePursuitController:
         self.min_depth = 1.5   # minimum cone detection range - increased
         self.max_lateral_distance = 4.0  # maximum lateral distance from vehicle center
         
-        # NEW: Turn radius and path widening parameters
+        # Turn radius and path widening parameters
         self.min_turn_radius = 3.5  # Minimum safe turning radius (meters)
         self.path_widening_factor = 1.8  # How much to widen the path in turns
         self.sharp_turn_threshold = 25.0  # Angle threshold for sharp turns (degrees)
@@ -272,7 +312,7 @@ class PurePursuitController:
         self.last_steering = 0.0
         self.steering_history = deque(maxlen=5)
         
-        # NEW: Turn state tracking
+        # Turn state tracking
         self.current_turn_type = "straight"  # "straight", "gentle", "sharp", "u_turn"
         self.turn_direction = "none"  # "left", "right", "none"
         self.path_offset = 0.0  # Current path offset for wider turns
@@ -293,7 +333,7 @@ class PurePursuitController:
         self.distance_traveled = 0.0
         self.last_position = None
         
-        # Initialize lap counter with enhanced timing
+        # Initialize lap counter with enhanced timing and speed tracking
         self.lap_counter = LapCounter()
     
     def detect_turn_type(self, current_gate, blue_cones, yellow_cones):
@@ -750,7 +790,7 @@ class PurePursuitController:
             lookahead_dist = np.sqrt(target_x**2 + target_y**2)
             print(f"DEBUG: Lookahead distance: {lookahead_dist:.2f}m")
             
-            # NEW: Calculate steering aggressiveness based on cone visibility risk
+            # Calculate steering aggressiveness based on cone visibility risk
             lateral_offset = abs(target_x)
             visibility_risk_factor = 1.0
             
@@ -762,7 +802,7 @@ class PurePursuitController:
                 visibility_risk_factor = 1.2
                 print(f"DEBUG: Moderate visibility risk - increasing steering aggressiveness by 20%")
             
-            # NEW: Adaptive lookahead with steering aggressiveness consideration
+            # Adaptive lookahead with steering aggressiveness consideration
             # For sharp turns, reduce lookahead to make steering more responsive
             base_adaptive_lookahead = max(self.lookahead_distance, min(lookahead_dist, 6.0))
             
@@ -784,7 +824,7 @@ class PurePursuitController:
             # Pure pursuit steering calculation with enhanced responsiveness
             base_steering_angle = np.arctan2(2.0 * self.wheelbase * np.sin(alpha), adaptive_lookahead)
             
-            # NEW: Apply additional steering enhancement for cone visibility preservation
+            # Apply additional steering enhancement for cone visibility preservation
             # If the lateral offset is significant, add extra steering bias
             if lateral_offset > 1.5:
                 # Calculate additional steering needed to keep cones in sight
@@ -819,7 +859,7 @@ class PurePursuitController:
             max_steering_rad = np.radians(30.0)  # Max 30 degrees
             normalized_steering = np.clip(steering_angle / max_steering_rad, -1.0, 1.0)
             
-            # NEW: Apply final visibility preservation enhancement
+            # Apply final visibility preservation enhancement
             # If we're at risk of losing cones and steering is not aggressive enough, boost it
             if lateral_offset > 2.0 and abs(normalized_steering) < 0.4:
                 steering_boost = min(0.2, (lateral_offset - 2.0) * 0.3)
@@ -845,7 +885,7 @@ class PurePursuitController:
         try:
             self.steering_history.append(raw_steering)
             
-            # NEW: Adaptive smoothing based on visibility risk
+            # Adaptive smoothing based on visibility risk
             lateral_offset = abs(getattr(self, 'current_target_x', 0.0))
             
             if len(self.steering_history) >= 3:
@@ -867,7 +907,7 @@ class PurePursuitController:
             else:
                 smoothed = raw_steering
             
-            # NEW: Adaptive rate limiting based on cone visibility risk
+            # Adaptive rate limiting based on cone visibility risk
             if lateral_offset > 2.5:
                 # High risk - allow more aggressive steering changes
                 max_change = 0.25
@@ -930,6 +970,11 @@ class PurePursuitController:
             # Update distance traveled
             self.update_distance_traveled()
             
+            # Get current speed and record it for lap statistics
+            velocity = self.vehicle.get_velocity()
+            current_speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
+            self.lap_counter.record_speed(current_speed)
+            
             # Process cone detections (includes orange cones)
             blue_cones, yellow_cones, orange_cones = self.process_cone_detections(cone_detections)
             print(f"DEBUG: Processed cones - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
@@ -940,7 +985,7 @@ class PurePursuitController:
                 vehicle_position = (transform.location.x, transform.location.y, transform.location.z)
                 self.lap_counter.check_orange_gate_passage(orange_cones, vehicle_position)
             
-            # NEW: Enhanced lost track detection with immediate recovery steering
+            # Enhanced lost track detection with immediate recovery steering
             if len(blue_cones) == 0 and len(yellow_cones) == 0:
                 self.lost_track_counter += 1
                 print(f"DEBUG: NO CONES DETECTED - lost track for {self.lost_track_counter} frames")
@@ -1026,7 +1071,7 @@ class PurePursuitController:
             original_target_x = track_segment['midpoint_x']
             original_target_y = track_segment['midpoint_y']
             
-            # NEW: Store current target for visibility calculations
+            # Store current target for visibility calculations
             self.current_target_x = original_target_x
             
             adjusted_target_x, adjusted_target_y = self.adjust_target_for_turn(
@@ -1041,22 +1086,20 @@ class PurePursuitController:
             current_depth = track_segment['avg_depth']
             target_speed = self.calculate_adaptive_speed(turn_type, smooth_steering, current_depth)
             
-            # Get current speed
-            velocity = self.vehicle.get_velocity()
-            current_speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
-            
-            # Apply control
-            control = carla.VehicleControl()
-            control.steer = float(smooth_steering)
-            
             speed_diff = target_speed - current_speed
             if speed_diff > 0.5:
+                control = carla.VehicleControl()
+                control.steer = float(smooth_steering)
                 control.throttle = min(0.5, 0.2 + 0.3 * (speed_diff / self.max_speed))
                 control.brake = 0.0
             elif speed_diff < -0.5:
+                control = carla.VehicleControl()
+                control.steer = float(smooth_steering)
                 control.throttle = 0.0
                 control.brake = min(0.4, 0.2 * abs(speed_diff) / self.max_speed)
             else:
+                control = carla.VehicleControl()
+                control.steer = float(smooth_steering)
                 control.throttle = 0.3
                 control.brake = 0.0
             
@@ -1122,10 +1165,11 @@ class CarlaRacingSystem:
         print("\nShutting down gracefully...")
         self.running = False
         
-    def plot_lap_times(self, lap_stats):
-        """Create a professional lap times visualization for presentation"""
+    def plot_comprehensive_analysis(self, lap_stats):
+        """Create a comprehensive 5x2 grid analysis with speed tracking and consistency metrics"""
         lap_times = lap_stats['lap_times']
         lap_turn_data = lap_stats['lap_turn_data']
+        lap_speed_data = lap_stats['lap_speed_data']
         
         if not lap_times:
             print("No lap times to plot.")
@@ -1139,245 +1183,457 @@ class CarlaRacingSystem:
             plt.clf()
             plt.close('all')
             
-            # Create subplots: lap times on top, turn analysis on bottom
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12))
+            # Create 5x2 grid of subplots
+            fig = plt.figure(figsize=(20, 16))
             fig.patch.set_facecolor('#1b2a39')
             
-            # ===================
-            # TOP PLOT: LAP TIMES
-            # ===================
-            ax1.set_facecolor('#1b2a39')
+            # Grid layout: 2 rows, 5 columns
+            gs = fig.add_gridspec(2, 5, hspace=0.3, wspace=0.3)
             
-            # Prepare data
+            # Define colors for consistent theming
+            primary_color = '#da940b'
+            secondary_color = '#ffd700'
+            text_color = 'white'
+            background_color = '#1b2a39'
+            
             lap_numbers = list(range(1, len(lap_times) + 1))
-            lap_times_formatted = [t for t in lap_times]
             
-            # Create bars with custom color
-            bars = ax1.bar(lap_numbers, lap_times_formatted, 
-                         color='#da940b', alpha=0.8, edgecolor='#ffffff', linewidth=0.5)
+            # ===================
+            # TOP ROW (5 graphs)
+            # ===================
+            
+            # 1. LAP TIMES
+            ax1 = fig.add_subplot(gs[0, 0])
+            ax1.set_facecolor(background_color)
+            
+            bars = ax1.bar(lap_numbers, lap_times, color=primary_color, alpha=0.8, edgecolor='white', linewidth=0.5)
             
             # Highlight best lap
             if lap_stats['best_lap'] != float('inf'):
                 best_lap_index = lap_times.index(lap_stats['best_lap'])
-                bars[best_lap_index].set_color('#ffd700')  # Gold for best lap
-                bars[best_lap_index].set_edgecolor('#ffffff')
+                bars[best_lap_index].set_color(secondary_color)
                 bars[best_lap_index].set_linewidth(2)
             
-            # Add value labels on bars
-            for i, (bar, lap_time) in enumerate(zip(bars, lap_times)):
-                height = bar.get_height()
-                # Format time as MM:SS
-                minutes = int(lap_time // 60)
-                seconds = lap_time % 60
-                time_str = f"{minutes}:{seconds:05.2f}"
-                
-                ax1.text(bar.get_x() + bar.get_width()/2., height + max(lap_times) * 0.01,
-                       time_str, ha='center', va='bottom', color='white', 
-                       fontsize=9, fontweight='bold')
-            
-            # Customize the top plot
-            ax1.set_xlabel('Lap Number', fontsize=12, fontweight='bold', color='white')
-            ax1.set_ylabel('Lap Time (seconds)', fontsize=12, fontweight='bold', color='white')
-            ax1.set_title('Formula Student - Lap Time & Turn Consistency Analysis', 
-                        fontsize=16, fontweight='bold', color='white', pad=20)
-            
-            # Set y-axis to show time nicely
-            y_min = min(lap_times) * 0.95
-            y_max = max(lap_times) * 1.1
-            ax1.set_ylim(y_min, y_max)
-            
-            # Format y-axis labels as time
-            def format_time_axis(x, p):
-                minutes = int(x // 60)
-                seconds = x % 60
-                return f"{minutes}:{seconds:05.2f}"
-            
-            from matplotlib.ticker import FuncFormatter
-            ax1.yaxis.set_major_formatter(FuncFormatter(format_time_axis))
-            
-            # Customize grid
+            ax1.set_title('Lap Times', fontsize=12, fontweight='bold', color=text_color)
+            ax1.set_xlabel('Lap', fontsize=10, color=text_color)
+            ax1.set_ylabel('Time (s)', fontsize=10, color=text_color)
+            ax1.tick_params(colors=text_color, which='both')
             ax1.grid(True, alpha=0.3, color='white', linestyle='--')
-            ax1.set_axisbelow(True)
             
-            # Add average line
-            if len(lap_times) > 1:
-                avg_time = np.mean(lap_times)
-                ax1.axhline(y=avg_time, color='#e74c3c', linestyle='--', linewidth=2, alpha=0.8, label='Average')
-                ax1.legend(loc='upper right', fancybox=True, shadow=True, 
-                         facecolor='#2c3e50', edgecolor='#da940b', fontsize=9)
+            # 2. SPEED PER LAP
+            ax2 = fig.add_subplot(gs[0, 1])
+            ax2.set_facecolor(background_color)
             
-            # Customize tick colors
-            ax1.tick_params(colors='white', which='both')
-            for spine in ax1.spines.values():
-                spine.set_color('white')
-                spine.set_linewidth(1)
+            if lap_speed_data and len(lap_speed_data) > 0:
+                avg_speeds = [speed_data['avg_speed'] for speed_data in lap_speed_data]
+                max_speeds = [speed_data['max_speed'] for speed_data in lap_speed_data]
+                min_speeds = [speed_data['min_speed'] for speed_data in lap_speed_data]
+                
+                # Plot average speed as bars
+                speed_bars = ax2.bar(lap_numbers, avg_speeds, color='#2ecc71', alpha=0.7, label='Avg Speed')
+                
+                # Plot max and min as error bars
+                ax2.errorbar(lap_numbers, avg_speeds, 
+                           yerr=[np.array(avg_speeds) - np.array(min_speeds), 
+                                 np.array(max_speeds) - np.array(avg_speeds)],
+                           fmt='none', ecolor='#e74c3c', alpha=0.8, capsize=3)
+                
+                ax2.set_title('Speed per Lap', fontsize=12, fontweight='bold', color=text_color)
+                ax2.set_xlabel('Lap', fontsize=10, color=text_color)
+                ax2.set_ylabel('Speed (km/h)', fontsize=10, color=text_color)
+            else:
+                ax2.text(0.5, 0.5, 'No Speed Data', transform=ax2.transAxes, ha='center', va='center',
+                        fontsize=12, color=text_color, fontweight='bold')
+                ax2.set_title('Speed per Lap', fontsize=12, fontweight='bold', color=text_color)
             
-            # Set x-axis to show all lap numbers
-            ax1.set_xticks(lap_numbers)
-            ax1.set_xticklabels([f"Lap {i}" for i in lap_numbers], rotation=45 if len(lap_numbers) > 10 else 0)
+            ax2.tick_params(colors=text_color, which='both')
+            ax2.grid(True, alpha=0.3, color='white', linestyle='--')
             
-            # ========================
-            # BOTTOM PLOT: TURN ANALYSIS
-            # ========================
-            ax2.set_facecolor('#1b2a39')
+            # 3. TURN ANALYSIS
+            ax3 = fig.add_subplot(gs[0, 2])
+            ax3.set_facecolor(background_color)
             
             if lap_turn_data and len(lap_turn_data) > 0:
-                # Prepare turn data
                 turn_types = ['straight', 'gentle', 'sharp']
-                turn_colors = ['#2ecc71', '#f39c12', '#e74c3c']  # Green, Orange, Red
-                turn_labels = ['Straight', 'Gentle Turns', 'Sharp Turns']
+                turn_colors = ['#2ecc71', '#f39c12', '#e74c3c']
                 
-                # Create stacked bar chart
                 bottoms = np.zeros(len(lap_turn_data))
-                
-                for i, (turn_type, color, label) in enumerate(zip(turn_types, turn_colors, turn_labels)):
+                for i, (turn_type, color) in enumerate(zip(turn_types, turn_colors)):
                     values = [lap_data.get(turn_type, 0) for lap_data in lap_turn_data]
-                    ax2.bar(lap_numbers, values, bottom=bottoms, color=color, alpha=0.8,
-                           label=label, edgecolor='white', linewidth=0.5)
-                    
-                    # Add value labels on bars (only if value > 0)
-                    for j, (value, bottom) in enumerate(zip(values, bottoms)):
-                        if value > 0:
-                            ax2.text(lap_numbers[j], bottom + value/2, str(value),
-                                   ha='center', va='center', color='white', fontweight='bold', fontsize=8)
-                    
+                    ax3.bar(lap_numbers, values, bottom=bottoms, color=color, alpha=0.8)
                     bottoms += values
                 
-                # Customize the bottom plot
-                ax2.set_xlabel('Lap Number', fontsize=12, fontweight='bold', color='white')
-                ax2.set_ylabel('Number of Turns', fontsize=12, fontweight='bold', color='white')
-                ax2.set_title('Turn Type Distribution per Lap', fontsize=14, fontweight='bold', color='white')
-                
-                # Add legend
-                ax2.legend(loc='upper right', fancybox=True, shadow=True, 
-                         facecolor='#2c3e50', edgecolor='#da940b', fontsize=9)
-                
-                # Customize grid
-                ax2.grid(True, alpha=0.3, color='white', linestyle='--')
-                ax2.set_axisbelow(True)
-                
-                # Set integer y-axis
-                max_turns = max([sum(lap_data.values()) for lap_data in lap_turn_data])
-                ax2.set_ylim(0, max_turns + 1)
-                ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-                
+                ax3.set_title('Turn Distribution', fontsize=12, fontweight='bold', color=text_color)
+                ax3.set_xlabel('Lap', fontsize=10, color=text_color)
+                ax3.set_ylabel('Turn Count', fontsize=10, color=text_color)
             else:
-                # No turn data available
-                ax2.text(0.5, 0.5, 'No turn data available\n(Complete more laps)', 
-                        transform=ax2.transAxes, ha='center', va='center',
-                        fontsize=14, color='white', fontweight='bold')
-                ax2.set_xlabel('Lap Number', fontsize=12, fontweight='bold', color='white')
-                ax2.set_ylabel('Number of Turns', fontsize=12, fontweight='bold', color='white')
-                ax2.set_title('Turn Type Distribution per Lap', fontsize=14, fontweight='bold', color='white')
+                ax3.text(0.5, 0.5, 'No Turn Data', transform=ax3.transAxes, ha='center', va='center',
+                        fontsize=12, color=text_color, fontweight='bold')
+                ax3.set_title('Turn Distribution', fontsize=12, fontweight='bold', color=text_color)
             
-            # Customize tick colors for bottom plot
-            ax2.tick_params(colors='white', which='both')
-            for spine in ax2.spines.values():
-                spine.set_color('white')
-                spine.set_linewidth(1)
+            ax3.tick_params(colors=text_color, which='both')
+            ax3.grid(True, alpha=0.3, color='white', linestyle='--')
             
-            # Set x-axis to show all lap numbers
-            if lap_turn_data:
-                ax2.set_xticks(lap_numbers)
-                ax2.set_xticklabels([f"Lap {i}" for i in lap_numbers], rotation=45 if len(lap_numbers) > 10 else 0)
+            # 4. LAP TIME TREND
+            ax4 = fig.add_subplot(gs[0, 3])
+            ax4.set_facecolor(background_color)
             
-            # ========================
-            # STATISTICS BOX
-            # ========================
-            # Statistics box on the top plot
-            stats_text = f"""Race Statistics:
-Total Laps: {len(lap_times)}
-Best Lap: {self.controller.lap_counter.format_time(lap_stats['best_lap'])}
-Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])}
-Total Race Time: {self.controller.lap_counter.format_time(lap_stats['total_race'])}
-Std Deviation: {np.std(lap_times):.3f}s"""
+            if len(lap_times) > 1:
+                ax4.plot(lap_numbers, lap_times, marker='o', color=primary_color, linewidth=2, markersize=6)
+                
+                # Add trend line
+                z = np.polyfit(lap_numbers, lap_times, 1)
+                p = np.poly1d(z)
+                trend_color = '#2ecc71' if z[0] < 0 else '#e74c3c'  # Green if improving, red if getting worse
+                ax4.plot(lap_numbers, p(lap_numbers), "--", color=trend_color, alpha=0.8, linewidth=2)
+                
+                # Add best lap horizontal line
+                ax4.axhline(y=lap_stats['best_lap'], color=secondary_color, linestyle=':', alpha=0.8, linewidth=2)
+                
+                ax4.set_title('Lap Time Trend', fontsize=12, fontweight='bold', color=text_color)
+                ax4.set_xlabel('Lap', fontsize=10, color=text_color)
+                ax4.set_ylabel('Time (s)', fontsize=10, color=text_color)
+            else:
+                ax4.text(0.5, 0.5, 'Need More Laps', transform=ax4.transAxes, ha='center', va='center',
+                        fontsize=12, color=text_color, fontweight='bold')
+                ax4.set_title('Lap Time Trend', fontsize=12, fontweight='bold', color=text_color)
             
-            # Create fancy statistics box
-            bbox_props = dict(boxstyle="round,pad=0.5", facecolor='#2c3e50', alpha=0.9, edgecolor='#da940b', linewidth=2)
-            ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes, fontsize=10,
-                    verticalalignment='top', bbox=bbox_props, color='white', fontweight='bold')
+            ax4.tick_params(colors=text_color, which='both')
+            ax4.grid(True, alpha=0.3, color='white', linestyle='--')
             
-            # Add consistency analysis
+            # 5. PERFORMANCE RADAR
+            ax5 = fig.add_subplot(gs[0, 4], projection='polar')
+            ax5.set_facecolor(background_color)
+            
+            if len(lap_times) > 1 and lap_speed_data:
+                # Calculate performance metrics
+                time_consistency = (1 - (np.std(lap_times) / np.mean(lap_times))) * 100
+                time_consistency = max(0, min(100, time_consistency))
+                
+                speed_consistency = 0
+                if lap_speed_data:
+                    speed_stds = [data['std_speed'] for data in lap_speed_data if data['std_speed'] > 0]
+                    if speed_stds:
+                        avg_speed_std = np.mean(speed_stds)
+                        avg_speeds = [data['avg_speed'] for data in lap_speed_data]
+                        if avg_speeds:
+                            speed_consistency = (1 - (avg_speed_std / np.mean(avg_speeds))) * 100
+                            speed_consistency = max(0, min(100, speed_consistency))
+                
+                best_lap_performance = ((max(lap_times) - lap_stats['best_lap']) / max(lap_times)) * 100
+                
+                # Radar chart data
+                categories = ['Time\nConsistency', 'Speed\nConsistency', 'Best Lap\nPerformance']
+                values = [time_consistency, speed_consistency, best_lap_performance]
+                
+                # Number of variables
+                N = len(categories)
+                
+                # Compute angle for each axis
+                angles = [n / float(N) * 2 * np.pi for n in range(N)]
+                angles += angles[:1]  # Complete the circle
+                
+                # Close the plot
+                values += values[:1]
+                
+                ax5.plot(angles, values, 'o-', linewidth=2, color=primary_color)
+                ax5.fill(angles, values, alpha=0.25, color=primary_color)
+                ax5.set_xticks(angles[:-1])
+                ax5.set_xticklabels(categories, color=text_color, fontsize=9)
+                ax5.set_ylim(0, 100)
+                ax5.set_title('Performance Radar', fontsize=12, fontweight='bold', color=text_color, pad=20)
+                ax5.grid(True, alpha=0.3)
+            else:
+                ax5.text(0.5, 0.5, 'Need More Data', transform=ax5.transAxes, ha='center', va='center',
+                        fontsize=12, color=text_color, fontweight='bold')
+                ax5.set_title('Performance Radar', fontsize=12, fontweight='bold', color=text_color)
+            
+            # ===================
+            # BOTTOM ROW (5 consistency metrics)
+            # ===================
+            
+            # 1. LAP TIME CONSISTENCY
+            ax6 = fig.add_subplot(gs[1, 0])
+            ax6.set_facecolor(background_color)
+            
             if len(lap_times) > 1:
                 std_dev = np.std(lap_times)
                 mean_time = np.mean(lap_times)
                 consistency_pct = (1 - (std_dev / mean_time)) * 100
                 
-                consistency_text = f"Lap Time Consistency: {consistency_pct:.1f}%"
+                # Create a gauge-like visualization
+                theta = np.linspace(0, np.pi, 100)
+                r = np.ones_like(theta)
+                
+                # Color based on consistency
                 if consistency_pct > 95:
-                    consistency_color = '#2ecc71'  # Green
-                    consistency_desc = "Excellent"
+                    gauge_color = '#2ecc71'
+                    status = 'Excellent'
                 elif consistency_pct > 90:
-                    consistency_color = '#f39c12'  # Orange
-                    consistency_desc = "Good"
+                    gauge_color = '#f39c12'
+                    status = 'Good'
                 else:
-                    consistency_color = '#e74c3c'  # Red
-                    consistency_desc = "Needs Improvement"
+                    gauge_color = '#e74c3c'
+                    status = 'Poor'
                 
-                consistency_full = f"{consistency_text}\n({consistency_desc})"
-                
-                bbox_props_consistency = dict(boxstyle="round,pad=0.3", facecolor=consistency_color, alpha=0.8, edgecolor='white')
-                ax1.text(0.98, 0.02, consistency_full, transform=ax1.transAxes, fontsize=11,
-                        verticalalignment='bottom', horizontalalignment='right', 
-                        bbox=bbox_props_consistency, color='white', fontweight='bold')
+                ax6.bar([0], [consistency_pct], color=gauge_color, alpha=0.8, width=0.8)
+                ax6.set_ylim(0, 100)
+                ax6.set_title('Time Consistency', fontsize=12, fontweight='bold', color=text_color)
+                ax6.set_ylabel('Consistency %', fontsize=10, color=text_color)
+                ax6.text(0, consistency_pct + 5, f'{consistency_pct:.1f}%\n({status})', 
+                        ha='center', va='bottom', color=text_color, fontweight='bold')
+            else:
+                ax6.text(0.5, 0.5, 'Need More Laps', transform=ax6.transAxes, ha='center', va='center',
+                        fontsize=12, color=text_color, fontweight='bold')
+                ax6.set_title('Time Consistency', fontsize=12, fontweight='bold', color=text_color)
             
-            # ========================
-            # TURN CONSISTENCY ANALYSIS
-            # ========================
+            ax6.tick_params(colors=text_color, which='both')
+            ax6.grid(True, alpha=0.3, color='white', linestyle='--')
+            
+            # 2. SPEED CONSISTENCY
+            ax7 = fig.add_subplot(gs[1, 1])
+            ax7.set_facecolor(background_color)
+            
+            if lap_speed_data and len(lap_speed_data) > 1:
+                # Calculate speed consistency across laps
+                avg_speeds = [data['avg_speed'] for data in lap_speed_data]
+                speed_consistency = 0
+                if avg_speeds:
+                    speed_std = np.std(avg_speeds)
+                    speed_mean = np.mean(avg_speeds)
+                    if speed_mean > 0:
+                        speed_consistency = (1 - (speed_std / speed_mean)) * 100
+                        speed_consistency = max(0, min(100, speed_consistency))
+                
+                # Color based on consistency
+                if speed_consistency > 95:
+                    gauge_color = '#2ecc71'
+                    status = 'Excellent'
+                elif speed_consistency > 90:
+                    gauge_color = '#f39c12'
+                    status = 'Good'
+                else:
+                    gauge_color = '#e74c3c'
+                    status = 'Poor'
+                
+                ax7.bar([0], [speed_consistency], color=gauge_color, alpha=0.8, width=0.8)
+                ax7.set_ylim(0, 100)
+                ax7.set_title('Speed Consistency', fontsize=12, fontweight='bold', color=text_color)
+                ax7.set_ylabel('Consistency %', fontsize=10, color=text_color)
+                ax7.text(0, speed_consistency + 5, f'{speed_consistency:.1f}%\n({status})', 
+                        ha='center', va='bottom', color=text_color, fontweight='bold')
+            else:
+                ax7.text(0.5, 0.5, 'No Speed Data', transform=ax7.transAxes, ha='center', va='center',
+                        fontsize=12, color=text_color, fontweight='bold')
+                ax7.set_title('Speed Consistency', fontsize=12, fontweight='bold', color=text_color)
+            
+            ax7.tick_params(colors=text_color, which='both')
+            ax7.grid(True, alpha=0.3, color='white', linestyle='--')
+            
+            # 3. TURN CONSISTENCY
+            ax8 = fig.add_subplot(gs[1, 2])
+            ax8.set_facecolor(background_color)
+            
             if lap_turn_data and len(lap_turn_data) > 1:
-                # Calculate turn consistency
-                turn_consistency_text = "Turn Pattern Consistency:\n"
+                # Calculate turn pattern consistency
+                turn_consistency_scores = []
                 
                 for turn_type in ['straight', 'gentle', 'sharp']:
                     turn_counts = [lap_data.get(turn_type, 0) for lap_data in lap_turn_data]
                     if any(count > 0 for count in turn_counts):
                         std_dev_turns = np.std(turn_counts)
                         mean_turns = np.mean(turn_counts)
-                        consistency = (1 - (std_dev_turns / (mean_turns + 0.1))) * 100
-                        consistency = max(0, min(100, consistency))
-                        turn_consistency_text += f"{turn_type.title()}: {consistency:.0f}%\n"
+                        if mean_turns > 0:
+                            consistency = (1 - (std_dev_turns / mean_turns)) * 100
+                            consistency = max(0, min(100, consistency))
+                            turn_consistency_scores.append(consistency)
                 
-                bbox_props_turns = dict(boxstyle="round,pad=0.3", facecolor='#34495e', alpha=0.9, edgecolor='white')
-                ax2.text(0.98, 0.98, turn_consistency_text.strip(), transform=ax2.transAxes, fontsize=9,
-                        verticalalignment='top', horizontalalignment='right', 
-                        bbox=bbox_props_turns, color='white', fontweight='bold')
+                if turn_consistency_scores:
+                    overall_turn_consistency = np.mean(turn_consistency_scores)
+                    
+                    # Color based on consistency
+                    if overall_turn_consistency > 85:
+                        gauge_color = '#2ecc71'
+                        status = 'Excellent'
+                    elif overall_turn_consistency > 70:
+                        gauge_color = '#f39c12'
+                        status = 'Good'
+                    else:
+                        gauge_color = '#e74c3c'
+                        status = 'Poor'
+                    
+                    ax8.bar([0], [overall_turn_consistency], color=gauge_color, alpha=0.8, width=0.8)
+                    ax8.set_ylim(0, 100)
+                    ax8.text(0, overall_turn_consistency + 5, f'{overall_turn_consistency:.1f}%\n({status})', 
+                            ha='center', va='bottom', color=text_color, fontweight='bold')
+                else:
+                    ax8.text(0.5, 0.5, 'Insufficient\nTurn Data', transform=ax8.transAxes, ha='center', va='center',
+                            fontsize=10, color=text_color, fontweight='bold')
+                
+                ax8.set_title('Turn Consistency', fontsize=12, fontweight='bold', color=text_color)
+                ax8.set_ylabel('Consistency %', fontsize=10, color=text_color)
+            else:
+                ax8.text(0.5, 0.5, 'No Turn Data', transform=ax8.transAxes, ha='center', va='center',
+                        fontsize=12, color=text_color, fontweight='bold')
+                ax8.set_title('Turn Consistency', fontsize=12, fontweight='bold', color=text_color)
             
-            # Tight layout and save
-            plt.tight_layout()
+            ax8.tick_params(colors=text_color, which='both')
+            ax8.grid(True, alpha=0.3, color='white', linestyle='--')
             
-            # Save the plot with high DPI for presentation
+            # 4. IMPROVEMENT TREND
+            ax9 = fig.add_subplot(gs[1, 3])
+            ax9.set_facecolor(background_color)
+            
+            if len(lap_times) > 2:
+                # Calculate improvement trend (lower times = better)
+                recent_laps = lap_times[-3:] if len(lap_times) >= 3 else lap_times
+                early_laps = lap_times[:3] if len(lap_times) >= 3 else lap_times[:-1] if len(lap_times) > 1 else [lap_times[0]]
+                
+                recent_avg = np.mean(recent_laps)
+                early_avg = np.mean(early_laps)
+                
+                improvement_pct = ((early_avg - recent_avg) / early_avg) * 100
+                
+                # Color based on improvement
+                if improvement_pct > 2:
+                    gauge_color = '#2ecc71'
+                    status = 'Improving'
+                elif improvement_pct > -2:
+                    gauge_color = '#f39c12'
+                    status = 'Stable'
+                else:
+                    gauge_color = '#e74c3c'
+                    status = 'Declining'
+                
+                # Normalize for display (center at 0, range -10 to +10)
+                display_value = np.clip(improvement_pct, -10, 10) + 10  # Convert to 0-20 range
+                
+                ax9.bar([0], [display_value], color=gauge_color, alpha=0.8, width=0.8)
+                ax9.set_ylim(0, 20)
+                ax9.set_title('Improvement Trend', fontsize=12, fontweight='bold', color=text_color)
+                ax9.set_ylabel('Trend Score', fontsize=10, color=text_color)
+                ax9.text(0, display_value + 1, f'{improvement_pct:+.1f}%\n({status})', 
+                        ha='center', va='bottom', color=text_color, fontweight='bold')
+                
+                # Add reference line at center (0% improvement)
+                ax9.axhline(y=10, color='white', linestyle='--', alpha=0.5)
+            else:
+                ax9.text(0.5, 0.5, 'Need More Laps', transform=ax9.transAxes, ha='center', va='center',
+                        fontsize=12, color=text_color, fontweight='bold')
+                ax9.set_title('Improvement Trend', fontsize=12, fontweight='bold', color=text_color)
+            
+            ax9.tick_params(colors=text_color, which='both')
+            ax9.grid(True, alpha=0.3, color='white', linestyle='--')
+            
+            # 5. OVERALL SCORE
+            ax10 = fig.add_subplot(gs[1, 4])
+            ax10.set_facecolor(background_color)
+            
+            if len(lap_times) > 1:
+                # Calculate overall performance score
+                scores = []
+                
+                # Time consistency score
+                if len(lap_times) > 1:
+                    time_consistency = (1 - (np.std(lap_times) / np.mean(lap_times))) * 100
+                    scores.append(max(0, min(100, time_consistency)))
+                
+                # Speed consistency score
+                if lap_speed_data:
+                    avg_speeds = [data['avg_speed'] for data in lap_speed_data]
+                    if len(avg_speeds) > 1:
+                        speed_std = np.std(avg_speeds)
+                        speed_mean = np.mean(avg_speeds)
+                        if speed_mean > 0:
+                            speed_consistency = (1 - (speed_std / speed_mean)) * 100
+                            scores.append(max(0, min(100, speed_consistency)))
+                
+                # Best lap performance (relative to average)
+                best_lap_score = ((np.mean(lap_times) - lap_stats['best_lap']) / np.mean(lap_times)) * 100
+                scores.append(max(0, min(100, best_lap_score)))
+                
+                if scores:
+                    overall_score = np.mean(scores)
+                    
+                    # Color and grade based on overall score
+                    if overall_score > 85:
+                        gauge_color = '#2ecc71'
+                        grade = 'A'
+                    elif overall_score > 75:
+                        gauge_color = '#27ae60'
+                        grade = 'B+'
+                    elif overall_score > 65:
+                        gauge_color = '#f39c12'
+                        grade = 'B'
+                    elif overall_score > 55:
+                        gauge_color = '#e67e22'
+                        grade = 'C+'
+                    else:
+                        gauge_color = '#e74c3c'
+                        grade = 'C'
+                    
+                    ax10.bar([0], [overall_score], color=gauge_color, alpha=0.8, width=0.8)
+                    ax10.set_ylim(0, 100)
+                    ax10.set_title('Overall Score', fontsize=12, fontweight='bold', color=text_color)
+                    ax10.set_ylabel('Score', fontsize=10, color=text_color)
+                    ax10.text(0, overall_score + 5, f'{overall_score:.0f}\nGrade: {grade}', 
+                            ha='center', va='bottom', color=text_color, fontweight='bold', fontsize=11)
+                else:
+                    ax10.text(0.5, 0.5, 'Calculating...', transform=ax10.transAxes, ha='center', va='center',
+                            fontsize=12, color=text_color, fontweight='bold')
+                    ax10.set_title('Overall Score', fontsize=12, fontweight='bold', color=text_color)
+            else:
+                ax10.text(0.5, 0.5, 'Need More Data', transform=ax10.transAxes, ha='center', va='center',
+                        fontsize=12, color=text_color, fontweight='bold')
+                ax10.set_title('Overall Score', fontsize=12, fontweight='bold', color=text_color)
+            
+            ax10.tick_params(colors=text_color, which='both')
+            ax10.grid(True, alpha=0.3, color='white', linestyle='--')
+            
+            # Add overall title
+            fig.suptitle('Formula Student - Comprehensive Racing Performance Analysis', 
+                        fontsize=18, fontweight='bold', color=text_color, y=0.95)
+            
+            # Add statistics summary box
+            stats_text = f"""Race Summary:
+Total Laps: {len(lap_times)} | Best: {self.controller.lap_counter.format_time(lap_stats['best_lap'])}
+Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | Total Time: {self.controller.lap_counter.format_time(lap_stats['total_race'])}"""
+            
+            fig.text(0.02, 0.02, stats_text, fontsize=10, color=text_color, 
+                    bbox=dict(boxstyle="round,pad=0.5", facecolor='#2c3e50', alpha=0.9, edgecolor=primary_color))
+            
+            # Save the comprehensive plot
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f"lap_analysis_complete_{timestamp}.png"
+            filename = f"comprehensive_racing_analysis_{timestamp}.png"
             
-            # Make sure the directory exists and is writable
             try:
-                plt.savefig(filename, dpi=300, bbox_inches='tight', facecolor='#1b2a39', edgecolor='none')
-                print(f"\n📊 Complete lap analysis visualization saved as: {filename}")
-                print(f"🎯 Perfect for your presentation! Shows both lap time and turn consistency.")
+                plt.savefig(filename, dpi=300, bbox_inches='tight', facecolor=background_color, edgecolor='none')
+                print(f"\n📊 Comprehensive racing analysis saved as: {filename}")
+                print(f"🎯 5x2 grid layout with speed tracking and consistency metrics!")
                 
                 # Get absolute path for user convenience
                 abs_path = os.path.abspath(filename)
                 print(f"📂 Full path: {abs_path}")
                 
             except Exception as save_error:
-                print(f"❌ Error saving plot: {save_error}")
+                print(f"❌ Error saving comprehensive plot: {save_error}")
                 # Try saving to a different location
                 try:
                     home_path = os.path.expanduser("~")
                     alt_filename = os.path.join(home_path, filename)
-                    plt.savefig(alt_filename, dpi=300, bbox_inches='tight', facecolor='#1b2a39', edgecolor='none')
-                    print(f"📊 Complete lap analysis visualization saved to home directory: {alt_filename}")
+                    plt.savefig(alt_filename, dpi=300, bbox_inches='tight', facecolor=background_color, edgecolor='none')
+                    print(f"📊 Comprehensive analysis saved to home directory: {alt_filename}")
                 except Exception as alt_save_error:
                     print(f"❌ Failed to save to home directory: {alt_save_error}")
             
-            # Close the plot to free memory (no display needed)
+            # Close the plot to free memory
             plt.close(fig)
             plt.close('all')
             
-            print("✅ Complete analysis chart generation completed successfully!")
+            print("✅ Comprehensive 5x2 grid analysis chart generation completed successfully!")
             
         except Exception as e:
-            print(f"❌ Error creating complete lap analysis visualization: {e}")
+            print(f"❌ Error creating comprehensive analysis visualization: {e}")
             import traceback
             traceback.print_exc()
             print("🔧 Try installing: pip install matplotlib pillow")
@@ -1467,10 +1723,10 @@ Std Deviation: {np.std(lap_times):.3f}s"""
             if not self.camera.setup():
                 raise RuntimeError("Failed to setup camera")
                 
-            # Setup robust controller
+            # Setup robust controller with speed tracking
             self.controller = PurePursuitController(self.vehicle)
             print("Camera and robust controller setup complete")
-            print(f"Lap counter with timing enabled - orange cones will be detected for lap counting")
+            print(f"Lap counter with timing and speed tracking enabled - orange cones will be detected for lap counting")
             
             return True
             
@@ -1490,7 +1746,7 @@ Std Deviation: {np.std(lap_times):.3f}s"""
                 # Get cone detections
                 cone_detections = getattr(self.camera, 'cone_detections', [])
                 
-                # Control vehicle using robust controller
+                # Control vehicle using robust controller with speed tracking
                 steering, speed = self.controller.control_vehicle(cone_detections)
                 
                 time.sleep(0.05)  # 20 Hz control loop
@@ -1502,15 +1758,15 @@ Std Deviation: {np.std(lap_times):.3f}s"""
                 time.sleep(0.1)  # Brief pause before retrying
     
     def display_loop(self):
-        """Display camera feed with detections"""
+        """Display camera feed with detections and enhanced speed HUD"""
         print("Starting display loop...")
         
         # Set CV2 to not use Qt backend if possible
         try:
-            cv2.namedWindow('CARLA Racing with Lap Times - Enhanced HUD', cv2.WINDOW_AUTOSIZE)
+            cv2.namedWindow('CARLA Racing with Speed & Lap Analysis - Enhanced HUD', cv2.WINDOW_AUTOSIZE)
         except Exception as e:
             print(f"Warning: Could not create CV2 window: {e}")
-            print("Running in headless mode - visualization disabled but lap timing will still work")
+            print("Running in headless mode - visualization disabled but lap timing and speed tracking will still work")
             # Set flag to disable display
             self.display_enabled = False
             return
@@ -1523,7 +1779,7 @@ Std Deviation: {np.std(lap_times):.3f}s"""
                     # Create visualization
                     viz_image = self.create_visualization()
                     
-                    cv2.imshow('CARLA Racing with Lap Times - Enhanced HUD', viz_image)
+                    cv2.imshow('CARLA Racing with Speed & Lap Analysis - Enhanced HUD', viz_image)
                     
                     # Check for exit key
                     key = cv2.waitKey(1) & 0xFF
@@ -1541,7 +1797,7 @@ Std Deviation: {np.std(lap_times):.3f}s"""
                 time.sleep(0.1)
     
     def create_visualization(self):
-        """Create enhanced visualization with lap times HUD on the right side"""
+        """Create enhanced visualization with lap times and speed data HUD on the right side"""
         try:
             if not hasattr(self.camera, 'rgb_image') or self.camera.rgb_image is None:
                 return np.zeros((720, 1280, 3), dtype=np.uint8)
@@ -1624,13 +1880,13 @@ Std Deviation: {np.std(lap_times):.3f}s"""
             velocity = self.vehicle.get_velocity()
             current_speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
             
-            # Get lap timing statistics
+            # Get lap timing and speed statistics
             lap_stats = self.controller.lap_counter.get_lap_time_stats()
             
-            # LEFT SIDE STATUS (reduced content to make room for lap times)
+            # LEFT SIDE STATUS (reduced content to make room for enhanced HUD)
             left_status_text = [
-                f"Mode: Using Existing Vehicle",
-                f"Blue: {len([d for d in cone_detections if d.get('cls') == 1])} | Yellow: {len([d for d in cone_detections if d.get('cls') == 0])} | Orange: {len([d for d in cone_detections if d.get('cls') == 2])}",
+                f"Mode: Enhanced Speed & Consistency Tracking",
+                f"Cones - Blue: {len([d for d in cone_detections if d.get('cls') == 1])} | Yellow: {len([d for d in cone_detections if d.get('cls') == 0])} | Orange: {len([d for d in cone_detections if d.get('cls') == 2])}",
                 f"Current Speed: {current_speed:.1f} m/s ({current_speed*3.6:.1f} km/h)",
                 f"Distance: {self.controller.distance_traveled:.1f}m",
                 f"Steering: {self.controller.last_steering:.3f}",
@@ -1648,106 +1904,92 @@ Std Deviation: {np.std(lap_times):.3f}s"""
                     color = (255, 0, 0) if self.controller.lost_track_counter > 10 else (0, 255, 0)
                 cv2.putText(viz_image, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
-            # RIGHT SIDE LAP TIMES HUD
-            right_x_start = 880  # Start position for right-side HUD
+            # RIGHT SIDE ENHANCED HUD WITH SPEED DATA
+            right_x_start = 850  # Start position for right-side HUD
             
-            # Draw semi-transparent background for lap times section
+            # Draw semi-transparent background for enhanced HUD section
             overlay = viz_image.copy()
-            cv2.rectangle(overlay, (right_x_start - 10, 40), (1270, 350), (0, 0, 0), -1)
+            cv2.rectangle(overlay, (right_x_start - 10, 40), (1270, 500), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.7, viz_image, 0.3, 0, viz_image)
             
-            # LAP TIMES HEADER
-            cv2.putText(viz_image, "LAP TIMES", (right_x_start, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+            # ENHANCED HUD HEADER
+            cv2.putText(viz_image, "RACING ANALYTICS", (right_x_start, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
             
             # Current lap time (large and prominent)
             current_lap_formatted = self.controller.lap_counter.format_time(lap_stats['current_lap'])
             cv2.putText(viz_image, "Current Lap:", (right_x_start, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             cv2.putText(viz_image, current_lap_formatted, (right_x_start, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             
+            # Current speed and lap speed stats
+            cv2.putText(viz_image, f"Speed: {current_speed*3.6:.1f} km/h", (right_x_start, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            
+            # Current lap speed statistics if available
+            if lap_stats['current_lap_speeds']:
+                current_speeds = lap_stats['current_lap_speeds']
+                current_avg_speed = np.mean(current_speeds)
+                current_max_speed = max(current_speeds)
+                cv2.putText(viz_image, f"Lap Avg: {current_avg_speed:.1f} km/h", (right_x_start, 165), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, f"Lap Max: {current_max_speed:.1f} km/h", (right_x_start, 185), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            
             # Total race time
             total_race_formatted = self.controller.lap_counter.format_time(lap_stats['total_race'])
-            cv2.putText(viz_image, "Total Race:", (right_x_start, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-            cv2.putText(viz_image, total_race_formatted, (right_x_start, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(viz_image, "Total Race:", (right_x_start, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            cv2.putText(viz_image, total_race_formatted, (right_x_start, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             # Laps completed (show both total detections and valid laps)
-            cv2.putText(viz_image, f"Total Laps: {lap_stats['laps_completed']}", (right_x_start, 195), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
-            cv2.putText(viz_image, f"Valid Laps: {lap_stats['valid_laps_completed']}", (right_x_start, 215), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(viz_image, f"Total Laps: {lap_stats['laps_completed']}", (right_x_start, 255), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
+            cv2.putText(viz_image, f"Valid Laps: {lap_stats['valid_laps_completed']}", (right_x_start, 275), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             
-            # Best lap time (highlighted if we have lap times)
+            # Best lap time and speed
             if lap_stats['best_lap'] != float('inf'):
                 best_lap_formatted = self.controller.lap_counter.format_time(lap_stats['best_lap'])
-                cv2.putText(viz_image, "Best Lap:", (right_x_start, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                cv2.putText(viz_image, best_lap_formatted, (right_x_start, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cv2.putText(viz_image, "Best Lap:", (right_x_start, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, best_lap_formatted, (right_x_start, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                
+                # Show speed for best lap if available
+                if lap_stats['lap_speed_data']:
+                    best_lap_index = lap_stats['lap_times'].index(lap_stats['best_lap'])
+                    if best_lap_index < len(lap_stats['lap_speed_data']):
+                        best_lap_speed = lap_stats['lap_speed_data'][best_lap_index]['avg_speed']
+                        cv2.putText(viz_image, f"(@ {best_lap_speed:.1f} km/h avg)", (right_x_start, 340), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (128, 255, 128), 2)
             else:
-                cv2.putText(viz_image, "Best Lap: --:--.---", (right_x_start, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
+                cv2.putText(viz_image, "Best Lap: --:--.---", (right_x_start, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
             
-            # Last lap time
+            # Last lap time and speed
             if lap_stats['last_lap'] > 0:
                 last_lap_formatted = self.controller.lap_counter.format_time(lap_stats['last_lap'])
-                cv2.putText(viz_image, "Last Lap:", (right_x_start, 285), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                cv2.putText(viz_image, last_lap_formatted, (right_x_start, 305), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                cv2.putText(viz_image, "Last Lap:", (right_x_start, 365), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, last_lap_formatted, (right_x_start, 385), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                
+                # Show speed for last lap if available
+                if lap_stats['lap_speed_data']:
+                    last_speed_data = lap_stats['lap_speed_data'][-1]
+                    last_avg_speed = last_speed_data['avg_speed']
+                    cv2.putText(viz_image, f"(@ {last_avg_speed:.1f} km/h avg)", (right_x_start, 405), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 128), 2)
             else:
-                cv2.putText(viz_image, "Last Lap: --:--.---", (right_x_start, 295), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
+                cv2.putText(viz_image, "Last Lap: --:--.---", (right_x_start, 375), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
             
-            # Average lap time
+            # Average lap time and speed
             if lap_stats['average_lap'] > 0:
                 avg_lap_formatted = self.controller.lap_counter.format_time(lap_stats['average_lap'])
-                cv2.putText(viz_image, "Average:", (right_x_start, 330), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                cv2.putText(viz_image, avg_lap_formatted, (right_x_start, 350), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (192, 192, 192), 2)
-            else:
-                cv2.putText(viz_image, "Average: --:--.---", (right_x_start, 340), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
-            
-            # Individual lap times (recent laps)
-            if lap_stats['lap_times']:
-                cv2.putText(viz_image, "Valid Laps (>1min):", (right_x_start, 375), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, "Average:", (right_x_start, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, avg_lap_formatted, (right_x_start, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (192, 192, 192), 2)
                 
-                # Show last 8 valid laps
-                recent_laps = lap_stats['lap_times'][-8:] if len(lap_stats['lap_times']) > 8 else lap_stats['lap_times']
-                for i, lap_time in enumerate(recent_laps):
-                    lap_number = len(lap_stats['lap_times']) - len(recent_laps) + i + 1
-                    lap_time_formatted = self.controller.lap_counter.format_time(lap_time)
-                    
-                    y_pos = 395 + i * 20
-                    if y_pos > 680:  # Don't go off screen
-                        break
-                    
-                    # Color coding: green for best lap, yellow for recent lap, white for others
-                    if abs(lap_time - lap_stats['best_lap']) < 0.01:  # Best lap
-                        color = (0, 255, 0)
-                        prefix = "★"  # Using star instead of emoji for better compatibility
-                    elif i == len(recent_laps) - 1:  # Most recent lap
-                        color = (0, 255, 255)
-                        prefix = ">"
-                    else:
-                        color = (255, 255, 255)
-                        prefix = " "
-                    
-                    lap_text = f"{prefix} Lap {lap_number}: {lap_time_formatted}"
-                    cv2.putText(viz_image, lap_text, (right_x_start, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                # Average speed across all laps
+                if lap_stats['lap_speed_data']:
+                    avg_speeds = [data['avg_speed'] for data in lap_stats['lap_speed_data']]
+                    overall_avg_speed = np.mean(avg_speeds)
+                    cv2.putText(viz_image, f"(@ {overall_avg_speed:.1f} km/h avg)", (right_x_start, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (192, 192, 192), 2)
             else:
-                cv2.putText(viz_image, "No valid laps yet", (right_x_start, 375), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
-                cv2.putText(viz_image, "(1min minimum)", (right_x_start, 395), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (128, 128, 128), 2)
+                cv2.putText(viz_image, "Average: --:--.---", (right_x_start, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
             
-            # Show turn statistics in HUD
+            # Show turn statistics in compact format
             if lap_stats['current_lap_turns']:
-                cv2.putText(viz_image, "Current Lap Turns:", (right_x_start, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, "Current Lap Turns:", (right_x_start, 500), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
                 
                 current_turns = lap_stats['current_lap_turns']
-                turn_y_start = 450
-                turn_colors = [(0, 255, 0), (0, 255, 255), (0, 165, 255)]  # Green, Cyan, Orange
-                turn_labels = ['Straight', 'Gentle', 'Sharp']
-                
-                for i, (turn_type, color, label) in enumerate(zip(['straight', 'gentle', 'sharp'], turn_colors, turn_labels)):
-                    count = current_turns.get(turn_type, 0)
-                    y_pos = turn_y_start + i * 20
-                    if y_pos > 650:  # Don't go off screen
-                        break
-                    
-                    turn_text = f"{label}: {count}"
-                    cv2.putText(viz_image, turn_text, (right_x_start, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-            
-            else:
-                cv2.putText(viz_image, "Turn tracking active", (right_x_start, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
+                turn_text = f"S:{current_turns['straight']} G:{current_turns['gentle']} Sh:{current_turns['sharp']}"
+                cv2.putText(viz_image, turn_text, (right_x_start, 520), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
             return viz_image
             
@@ -1769,11 +2011,12 @@ Std Deviation: {np.std(lap_times):.3f}s"""
             if not self.setup_camera_and_controller(model_path):
                 return False
             
-            print("System ready! Using existing vehicle for racing with enhanced lap timing.")
+            print("System ready! Using existing vehicle for racing with enhanced speed tracking and lap analysis.")
             print(f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id})")
             print("🟠 Orange cones will be detected for lap counting")
-            print("⏱️  Enhanced HUD with lap times on the right side")
-            print("📊 Press Ctrl+C to stop and generate lap times visualization for presentation")
+            print("⏱️  Enhanced HUD with lap times and speed data on the right side")
+            print("🚗 Speed tracking per lap for comprehensive analysis")
+            print("📊 Press Ctrl+C to stop and generate comprehensive 5x2 racing analysis visualization")
             print("Press 'q' in the display window to quit (if display is available)")
             print("💡 If running headless/SSH, only Ctrl+C will work to stop and generate charts")
             
@@ -1797,7 +2040,7 @@ Std Deviation: {np.std(lap_times):.3f}s"""
             self.cleanup()
     
     def cleanup(self):
-        """Clean up all resources without destroying the existing vehicle and generate lap times plot"""
+        """Clean up all resources without destroying the existing vehicle and generate comprehensive analysis plot"""
         print("Cleaning up resources...")
         
         self.running = False
@@ -1815,12 +2058,12 @@ Std Deviation: {np.std(lap_times):.3f}s"""
             except:
                 pass
         
-        # Print final race statistics and generate plot
+        # Print final race statistics and generate comprehensive plot
         if self.controller and hasattr(self.controller, 'lap_counter'):
             lap_stats = self.controller.lap_counter.get_lap_time_stats()
-            print(f"\n{'='*50}")
-            print(f"🏁 FINAL RACE STATISTICS")
-            print(f"{'='*50}")
+            print(f"\n{'='*60}")
+            print(f"🏁 FINAL COMPREHENSIVE RACING STATISTICS")
+            print(f"{'='*60}")
             print(f"Total Race Time: {self.controller.lap_counter.format_time(lap_stats['total_race'])}")
             print(f"Total Orange Gate Detections: {lap_stats['laps_completed']}")
             print(f"Valid Laps Completed (>1min): {lap_stats['valid_laps_completed']}")
@@ -1831,28 +2074,42 @@ Std Deviation: {np.std(lap_times):.3f}s"""
                 print(f"Average Lap Time: {self.controller.lap_counter.format_time(lap_stats['average_lap'])}")
                 print(f"Total Valid Laps: {len(lap_stats['lap_times'])}")
                 
+                # Show speed statistics
+                if lap_stats['lap_speed_data']:
+                    avg_speeds = [data['avg_speed'] for data in lap_stats['lap_speed_data']]
+                    max_speeds = [data['max_speed'] for data in lap_stats['lap_speed_data']]
+                    print(f"Average Speed Across All Laps: {np.mean(avg_speeds):.1f} km/h")
+                    print(f"Highest Speed Recorded: {max(max_speeds):.1f} km/h")
+                    print(f"Speed Consistency (Std Dev): {np.std(avg_speeds):.2f} km/h")
+                
                 # Show false detection statistics
                 false_detections = lap_stats['laps_completed'] - lap_stats['valid_laps_completed']
                 if false_detections > 0:
                     print(f"False Orange Gate Detections: {false_detections} (ignored <1min)")
                 
-                print(f"\nValid Lap Times & Turn Analysis (>1min only):")
+                print(f"\nDetailed Lap Analysis (>1min only):")
                 for i, (lap_time, turn_data) in enumerate(zip(lap_stats['lap_times'], lap_stats['lap_turn_data']), 1):
                     marker = " ★" if abs(lap_time - lap_stats['best_lap']) < 0.01 else ""
                     total_turns = sum(turn_data.values())
+                    
+                    speed_info = ""
+                    if i <= len(lap_stats['lap_speed_data']):
+                        speed_data = lap_stats['lap_speed_data'][i-1]
+                        speed_info = f" | Speed: {speed_data['avg_speed']:.1f} km/h avg, {speed_data['max_speed']:.1f} km/h max"
+                    
                     print(f"  Lap {i}: {self.controller.lap_counter.format_time(lap_time)}{marker}")
-                    print(f"    Turns: Straight:{turn_data['straight']}, Gentle:{turn_data['gentle']}, Sharp:{turn_data['sharp']} (Total: {total_turns})")
+                    print(f"    Turns: S:{turn_data['straight']}, G:{turn_data['gentle']}, Sh:{turn_data['sharp']} (Total: {total_turns}){speed_info}")
                 
-                # Generate the professional lap times and turn analysis visualization
-                print(f"\n📊 Generating complete lap analysis visualization for presentation...")
-                self.plot_lap_times(lap_stats)
+                # Generate the comprehensive racing analysis visualization
+                print(f"\n📊 Generating comprehensive racing analysis visualization for presentation...")
+                self.plot_comprehensive_analysis(lap_stats)
                 
             else:
                 print("No valid laps completed (all were under 1 minute)")
                 if lap_stats['laps_completed'] > 0:
                     print(f"Had {lap_stats['laps_completed']} orange gate detections, but all were under 1 minute (false detections)")
                 print("📊 No lap times to visualize - complete some valid laps (>1min) first!")
-            print(f"{'='*50}")
+            print(f"{'='*60}")
         
         # Cleanup camera
         if self.camera:
@@ -1872,7 +2129,7 @@ Std Deviation: {np.std(lap_times):.3f}s"""
                 pass
         
         print("Cleanup complete - existing vehicle preserved")
-        print("📊 Check your directory for the lap times visualization PNG file!")
+        print("📊 Check your directory for the comprehensive 5x2 racing analysis PNG file!")
 
 
 def main():
@@ -1885,15 +2142,15 @@ def main():
         model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
         print(f"Using default YOLO model: {model_path}")
     
-    # Create and run the enhanced racing system with lap timing HUD and visualization
+    # Create and run the enhanced racing system with comprehensive speed tracking and 5x2 visualization
     racing_system = CarlaRacingSystem()
     
     try:
         success = racing_system.run(model_path)
         if success:
-            print("Enhanced racing system with lap timing and visualization completed successfully")
+            print("Enhanced racing system with comprehensive speed tracking and 5x2 analysis completed successfully")
         else:
-            print("Enhanced racing system with lap timing and visualization failed to start")
+            print("Enhanced racing system with comprehensive speed tracking and 5x2 analysis failed to start")
     except KeyboardInterrupt:
         print("\nReceived interrupt signal")
     except Exception as e:
