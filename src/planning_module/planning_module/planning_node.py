@@ -1,28 +1,46 @@
+# =============================================================================
+# RACING SYSTEM CONFIGURATION - CHANGE THESE VALUES
+# =============================================================================
+target_laps = 10  # Set to None for unlimited laps, or any number (e.g., 1, 3, 5, 10)
+
+# Lap validation parameters
+MIN_LAP_TIME = 70.0  # Minimum seconds for a lap to be considered valid (default: 3.0)
+
+# Vehicle speed parameters  
+MIN_SPEED = 4.0   # Minimum vehicle speed in m/s (default: 70.0)
+MAX_SPEED = 10.0  # Maximum vehicle speed in m/s (default: 100.0)
+
+# Orange cone detection parameters
+ORANGE_GATE_THRESHOLD = 2.0  # Distance threshold for orange gate passage in meters (default: 2.0)
+ORANGE_COOLDOWN = 3.0        # Cooldown between orange gate detections in seconds (default: 3.0)
+# =============================================================================
+
 import carla
 import numpy as np
 import cv2
 import time
 import threading
 import signal
-import sys
 import os
 from collections import deque
 
 # Set matplotlib backend before importing pyplot to avoid Qt issues
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from matplotlib.patches import FancyBboxPatch
 
 from .zed_2i import Zed2iCamera
 
 class LapCounter:
-    def __init__(self):
+    def __init__(self, target_laps=None):
         self.laps_completed = 0
         self.last_orange_gate_time = 0
-        self.cooldown_duration = 3.0  # 3 seconds cooldown between lap counts
-        self.orange_gate_passed_threshold = 2.0  # Distance threshold for passing through orange gate
+        self.cooldown_duration = ORANGE_COOLDOWN  # Use configurable parameter
+        self.orange_gate_passed_threshold = ORANGE_GATE_THRESHOLD  # Use configurable parameter
+        
+        # Target laps functionality
+        self.target_laps = target_laps
+        self.target_reached = False
         
         # Lap timing functionality
         self.race_start_time = time.time()
@@ -43,11 +61,17 @@ class LapCounter:
         self.turn_change_cooldown = 1.0  # 1 second cooldown to prevent rapid turn type changes
         self.last_turn_change_time = 0
         
-        # NEW: Speed tracking for each lap
+        # Speed tracking for each lap
         self.current_lap_speeds = []  # Store speeds during current lap
         self.lap_speed_data = []  # Store speed statistics for each completed lap
         self.speed_sample_interval = 0.5  # Sample speed every 0.5 seconds
         self.last_speed_sample_time = 0
+        
+        print(f"🎯 Lap Counter initialized:")
+        print(f"   Target: {target_laps if target_laps else 'UNLIMITED'} valid laps")
+        print(f"   Min lap time: {MIN_LAP_TIME}s")
+        print(f"   Orange gate threshold: {ORANGE_GATE_THRESHOLD}m")
+        print(f"   Orange cooldown: {ORANGE_COOLDOWN}s")
         
     def record_speed(self, speed_ms):
         """Record speed sample for current lap"""
@@ -99,7 +123,7 @@ class LapCounter:
             'current_lap': current_lap,
             'total_race': total_race,
             'laps_completed': self.laps_completed,
-            'valid_laps_completed': len(self.lap_times),  # Only count valid laps (>1min)
+            'valid_laps_completed': len(self.lap_times),  # Only count valid laps (>MIN_LAP_TIME)
             'best_lap': self.best_lap_time,
             'last_lap': self.last_lap_time,
             'lap_times': self.lap_times.copy(),
@@ -107,7 +131,9 @@ class LapCounter:
             'lap_turn_data': self.lap_turn_data.copy(),
             'current_lap_turns': self.current_lap_turns.copy(),
             'lap_speed_data': self.lap_speed_data.copy(),
-            'current_lap_speeds': self.current_lap_speeds.copy()
+            'current_lap_speeds': self.current_lap_speeds.copy(),
+            'target_laps': self.target_laps,
+            'target_reached': self.target_reached
         }
         
         return stats
@@ -157,13 +183,12 @@ class LapCounter:
         # Calculate lap time
         lap_time = current_time - self.lap_start_time
         
-        # Minimum lap time threshold (60 seconds = 1 minute)
-        MIN_LAP_TIME = 60.0
-        
         # Skip first "lap" if it's too short (race start)
         if self.laps_completed == 0 and lap_time < 10.0:
             print(f"🏁 RACE STARTED! Starting lap timing...")
             print(f"   Minimum lap time for counting: {self.format_time(MIN_LAP_TIME)}")
+            if self.target_laps:
+                print(f"🎯 Target: {self.target_laps} valid laps")
         else:
             # Check if lap time meets minimum threshold
             if lap_time < MIN_LAP_TIME:
@@ -179,12 +204,13 @@ class LapCounter:
             # Valid lap - record the lap time, turn data, and speed data
             self.lap_times.append(lap_time)
             self.last_lap_time = lap_time
+            valid_lap_number = len(self.lap_times)
             
             # Record turn data for this lap
             lap_turn_summary = self.current_lap_turns.copy()
             self.lap_turn_data.append(lap_turn_summary)
             
-            # NEW: Record speed data for this lap
+            # Record speed data for this lap
             if self.current_lap_speeds:
                 speed_stats = {
                     'max_speed': max(self.current_lap_speeds),
@@ -210,13 +236,22 @@ class LapCounter:
                 self.best_lap_time = lap_time
                 print(f"🏆 NEW BEST LAP TIME: {self.format_time(lap_time)}!")
             
-            print(f"🏁 VALID LAP {len(self.lap_times)} COMPLETED!")
+            print(f"🏁 VALID LAP {valid_lap_number} COMPLETED!")
             print(f"   Lap Time: {self.format_time(lap_time)}")
             print(f"   Best Lap: {self.format_time(self.best_lap_time)}")
             print(f"   Turn Summary: Straight:{lap_turn_summary['straight']}, Gentle:{lap_turn_summary['gentle']}, Sharp:{lap_turn_summary['sharp']}")
             if len(self.lap_times) > 1:
                 avg_time = sum(self.lap_times) / len(self.lap_times)
                 print(f"   Average: {self.format_time(avg_time)}")
+            
+            # Check if target laps reached
+            if self.target_laps and valid_lap_number >= self.target_laps:
+                self.target_reached = True
+                print(f"🎯 TARGET REACHED! Completed {valid_lap_number}/{self.target_laps} valid laps")
+                print(f"🏁 Race will end after this lap!")
+            elif self.target_laps:
+                remaining_laps = self.target_laps - valid_lap_number
+                print(f"🎯 Progress: {valid_lap_number}/{self.target_laps} valid laps ({remaining_laps} remaining)")
             
             # Reset counters for next lap
             self.current_lap_turns = {
@@ -286,14 +321,14 @@ class LapCounter:
         return True
 
 class PurePursuitController:
-    def __init__(self, vehicle, lookahead_distance=4.0):
+    def __init__(self, vehicle, lookahead_distance=4.0, target_laps=None):
         self.vehicle = vehicle
         self.lookahead_distance = lookahead_distance
         
-        # Vehicle parameters
+        # Vehicle parameters - use configurable speeds
         self.wheelbase = 2.7  # meters
-        self.max_speed = 100.0  # m/s
-        self.min_speed = 70.0  # m/s
+        self.max_speed = MAX_SPEED  # Use configurable parameter
+        self.min_speed = MIN_SPEED  # Use configurable parameter
         
         # Control parameters - optimized for immediate track section focus
         self.safety_offset = 1.75  # meters from cones - standard track width estimation
@@ -331,8 +366,15 @@ class PurePursuitController:
         self.distance_traveled = 0.0
         self.last_position = None
         
-        # Initialize lap counter with enhanced timing and speed tracking
-        self.lap_counter = LapCounter()
+        # Initialize lap counter with enhanced timing, speed tracking, and target laps
+        self.lap_counter = LapCounter(target_laps=target_laps)
+        
+        print(f"🚗 Controller initialized:")
+        print(f"   Speed range: {MIN_SPEED:.1f} - {MAX_SPEED:.1f} m/s ({MIN_SPEED*3.6:.1f} - {MAX_SPEED*3.6:.1f} km/h)")
+    
+    def is_target_reached(self):
+        """Check if target laps have been reached"""
+        return self.lap_counter.target_reached
     
     def detect_turn_type_from_cones(self, blue_cones, yellow_cones):
         """Detect turn type and direction from cone patterns - limited to first 3 pairs"""
@@ -822,15 +864,30 @@ class PurePursuitController:
             print(f"Error updating distance: {e}")
     
     def control_vehicle(self, cone_detections):
-        """Main control function with smooth cone line following"""
+        """Main control function with smooth cone line following and target lap checking"""
         try:
             print(f"\n{'='*60}")
             print(f"DEBUG: CONTROL CYCLE - {len(cone_detections) if cone_detections else 0} detections")
-            print(f"Total orange gate detections: {self.lap_counter.laps_completed}")
-            print(f"Valid laps (>1min): {len(self.lap_counter.lap_times)}")
+            
+            # Get lap statistics for display
+            lap_stats = self.lap_counter.get_lap_time_stats()
+            print(f"Total orange gate detections: {lap_stats['laps_completed']}")
+            print(f"Valid laps (>{MIN_LAP_TIME}s): {lap_stats['valid_laps_completed']}")
+            if lap_stats['target_laps']:
+                print(f"Target: {lap_stats['target_laps']} laps | Reached: {lap_stats['target_reached']}")
             print(f"Current turn type: {self.current_turn_type}, Direction: {self.turn_direction}")
             print(f"Lost track counter: {self.lost_track_counter}")
             print(f"{'='*60}")
+            
+            # Check if target laps reached - if so, stop the vehicle safely
+            if self.is_target_reached():
+                print(f"🎯 TARGET LAPS REACHED! Stopping vehicle safely...")
+                control = carla.VehicleControl()
+                control.steer = 0.0
+                control.throttle = 0.0
+                control.brake = 1.0
+                self.vehicle.apply_control(control)
+                return 0.0, 0.0  # Return zero values to indicate stopping
             
             # Update distance traveled
             self.update_distance_traveled()
@@ -976,8 +1033,8 @@ class PurePursuitController:
             print(f"  Current Speed: {current_speed:.1f} m/s ({current_speed*3.6:.1f} km/h)")
             print(f"  Target Speed: {target_speed:.1f} m/s ({target_speed*3.6:.1f} km/h)")
             print(f"  Distance: {self.distance_traveled:.1f}m")
-            print(f"  Total orange detections: {self.lap_counter.laps_completed}")
-            print(f"  Valid laps (>1min): {len(self.lap_counter.lap_times)}")
+            if lap_stats['target_laps']:
+                print(f"  Target Progress: {lap_stats['valid_laps_completed']}/{lap_stats['target_laps']} laps")
             print(f"{'='*60}\n")
             
             return smooth_steering, target_speed
@@ -1440,26 +1497,39 @@ class CarlaRacingSystem:
             ax10.tick_params(colors=text_color, which='both')
             ax10.grid(True, alpha=0.3, color='white', linestyle='--')
             
-            # Add overall title
-            fig.suptitle('Formula Student - Comprehensive Racing Performance Analysis', 
-                        fontsize=18, fontweight='bold', color=text_color, y=0.95)
+            # Add overall title with target lap info and configuration
+            target_info = f" (Target: {lap_stats.get('target_laps', 'Unlimited')} laps)" if lap_stats.get('target_laps') else ""
+            config_info = f" | Min Lap: {MIN_LAP_TIME}s | Speed: {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s"
+            fig.suptitle(f'Formula Student - Racing Performance Analysis{target_info}{config_info}', 
+                        fontsize=16, fontweight='bold', color=text_color, y=0.95)
             
-            # Add statistics summary box
+            # Add statistics summary box with target progress and configuration
+            target_progress = ""
+            if lap_stats.get('target_laps'):
+                target_progress = f" | Target Progress: {len(lap_times)}/{lap_stats['target_laps']}"
+                if lap_stats.get('target_reached'):
+                    target_progress += " ✅ COMPLETED"
+            
             stats_text = f"""Race Summary:
 Total Laps: {len(lap_times)} | Best: {self.controller.lap_counter.format_time(lap_stats['best_lap'])}
-Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | Total Time: {self.controller.lap_counter.format_time(lap_stats['total_race'])}"""
+Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | Total Time: {self.controller.lap_counter.format_time(lap_stats['total_race'])}{target_progress}
+Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Orange Gate {ORANGE_GATE_THRESHOLD}m/{ORANGE_COOLDOWN}s"""
             
-            fig.text(0.02, 0.02, stats_text, fontsize=10, color=text_color, 
+            fig.text(0.02, 0.02, stats_text, fontsize=9, color=text_color, 
                     bbox=dict(boxstyle="round,pad=0.5", facecolor='#2c3e50', alpha=0.9, edgecolor=primary_color))
             
             # Save the comprehensive plot
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f"comprehensive_racing_analysis_{timestamp}.png"
+            target_suffix = f"_target{lap_stats.get('target_laps', 'unlimited')}" if lap_stats.get('target_laps') else ""
+            config_suffix = f"_minlap{MIN_LAP_TIME}s_speed{MIN_SPEED:.0f}-{MAX_SPEED:.0f}"
+            filename = f"racing_analysis{target_suffix}{config_suffix}_{timestamp}.png"
             
             try:
                 plt.savefig(filename, dpi=300, bbox_inches='tight', facecolor=background_color, edgecolor='none')
                 print(f"\n📊 Comprehensive racing analysis saved as: {filename}")
-                print(f"🎯 5x2 grid layout with speed tracking and consistency metrics!")
+                print(f"🎯 Configuration: Target {lap_stats.get('target_laps', 'unlimited')} laps | Min lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s")
+                if lap_stats.get('target_laps'):
+                    print(f"🏁 Status: {len(lap_times)}/{lap_stats['target_laps']} laps | {'✅ COMPLETED' if lap_stats.get('target_reached') else '🔄 IN PROGRESS'}")
                 
                 # Get absolute path for user convenience
                 abs_path = os.path.abspath(filename)
@@ -1480,7 +1550,7 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
             plt.close(fig)
             plt.close('all')
             
-            print("✅ Comprehensive 5x2 grid analysis chart generation completed successfully!")
+            print("✅ Comprehensive racing analysis chart generation completed successfully!")
             
         except Exception as e:
             print(f"❌ Error creating comprehensive analysis visualization: {e}")
@@ -1559,7 +1629,7 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
             return None
     
     def setup_camera_and_controller(self, model_path=None):
-        """Setup ZED 2i camera and robust controller"""
+        """Setup ZED 2i camera and robust controller with configurable parameters"""
         try:
             # Setup camera
             self.camera = Zed2iCamera(
@@ -1573,11 +1643,15 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
             if not self.camera.setup():
                 raise RuntimeError("Failed to setup camera")
                 
-            # Setup improved controller with smooth cone following
-            self.controller = PurePursuitController(self.vehicle)
+            # Setup improved controller with configurable parameters
+            self.controller = PurePursuitController(self.vehicle, target_laps=target_laps)
             print("Camera and improved cone following controller setup complete")
             print(f"Lap counter with timing and speed tracking enabled - orange cones will be detected for lap counting")
             print(f"Enhanced with smooth cone line following and early turn detection")
+            if target_laps:
+                print(f"🎯 TARGET SET: Will stop automatically after {target_laps} valid laps")
+            else:
+                print(f"🔄 UNLIMITED MODE: Will run until manually stopped")
             
             return True
             
@@ -1586,11 +1660,18 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
             return False
     
     def control_loop(self):
-        """Main control loop for vehicle"""
-        print("Starting smooth cone following control loop...")
+        """Main control loop for vehicle with target lap checking"""
+        print("Starting configurable cone following control loop...")
+        print(f"🔧 Configuration: Target {target_laps if target_laps else 'unlimited'} laps | Min lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s")
         
         while self.running:
             try:
+                # Check if target laps reached
+                if self.controller and self.controller.is_target_reached():
+                    print(f"🎯 TARGET LAPS REACHED! Stopping control loop...")
+                    self.running = False
+                    break
+                
                 # Process camera frame
                 self.camera.process_frame()
                 
@@ -1599,6 +1680,12 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
                 
                 # Control vehicle using improved smooth cone following
                 steering, speed = self.controller.control_vehicle(cone_detections)
+                
+                # If controller returns zeros, it means target reached and vehicle stopped
+                if steering == 0.0 and speed == 0.0 and self.controller.is_target_reached():
+                    print(f"🏁 Vehicle stopped - target laps completed!")
+                    self.running = False
+                    break
                 
                 time.sleep(0.05)  # 20 Hz control loop
                 
@@ -1609,12 +1696,12 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
                 time.sleep(0.1)  # Brief pause before retrying
     
     def display_loop(self):
-        """Display camera feed with detections and enhanced speed HUD"""
+        """Display camera feed with detections and enhanced speed HUD including target progress"""
         print("Starting display loop...")
         
         # Set CV2 to not use Qt backend if possible
         try:
-            cv2.namedWindow('CARLA Racing - Smooth Cone Following with Enhanced HUD', cv2.WINDOW_AUTOSIZE)
+            cv2.namedWindow('CARLA Racing - Configurable Parameters', cv2.WINDOW_AUTOSIZE)
         except Exception as e:
             print(f"Warning: Could not create CV2 window: {e}")
             print("Running in headless mode - visualization disabled but lap timing and speed tracking will still work")
@@ -1630,7 +1717,7 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
                     # Create visualization
                     viz_image = self.create_visualization()
                     
-                    cv2.imshow('CARLA Racing - Smooth Cone Following with Enhanced HUD', viz_image)
+                    cv2.imshow('CARLA Racing - Configurable Parameters', viz_image)
                     
                     # Check for exit key
                     key = cv2.waitKey(1) & 0xFF
@@ -1648,7 +1735,7 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
                 time.sleep(0.1)
     
     def create_visualization(self):
-        """Create enhanced visualization with lap times and speed data HUD on the right side"""
+        """Create enhanced visualization with configurable parameters shown in HUD"""
         try:
             if not hasattr(self.camera, 'rgb_image') or self.camera.rgb_image is None:
                 return np.zeros((720, 1280, 3), dtype=np.uint8)
@@ -1721,113 +1808,144 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
             # Get lap timing and speed statistics
             lap_stats = self.controller.lap_counter.get_lap_time_stats()
             
-            # LEFT SIDE STATUS (reduced content to make room for enhanced HUD)
+            # LEFT SIDE STATUS WITH CONFIGURATION INFO
             left_status_text = [
-                f"Mode: Immediate Midpoint Focus",
+                f"Mode: Configurable Racing System",
+                f"Config: Target {target_laps if target_laps else 'unlimited'} | MinLap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s",
+                f"Orange Gate: {ORANGE_GATE_THRESHOLD}m threshold | {ORANGE_COOLDOWN}s cooldown",
                 f"Cones - Blue: {len([d for d in cone_detections if d.get('cls') == 1])} | Yellow: {len([d for d in cone_detections if d.get('cls') == 0])} | Orange: {len([d for d in cone_detections if d.get('cls') == 2])}",
                 f"Current Speed: {current_speed:.1f} m/s ({current_speed*3.6:.1f} km/h)",
-                f"Distance: {self.controller.distance_traveled:.1f}m",
-                f"Steering: {self.controller.last_steering:.3f}",
-                f"Lost Track: {self.controller.lost_track_counter}"
+                f"Distance: {self.controller.distance_traveled:.1f}m"
             ]
             
             for i, text in enumerate(left_status_text):
-                y_pos = 50 + i*25  # Start lower to avoid vehicle info
+                y_pos = 50 + i*22  # Start lower to avoid vehicle info
                 color = (0, 255, 0)
                 if i == 0:  # Mode info
-                    color = (0, 255, 255)  # Cyan for immediate midpoint focus
-                elif i == 2:  # Current speed
+                    color = (255, 255, 0)  # Yellow for configurable mode
+                elif i == 1:  # Config line
+                    color = (255, 165, 0)  # Orange for configuration
+                elif i == 2:  # Orange gate config
+                    color = (255, 100, 0)  # Orange for gate config
+                elif i == 4:  # Current speed
                     color = (0, 255, 255)  # Cyan for current speed
-                elif i == 5:  # Lost track counter
-                    color = (255, 0, 0) if self.controller.lost_track_counter > 10 else (0, 255, 0)
-                cv2.putText(viz_image, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                cv2.putText(viz_image, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
             
-            # RIGHT SIDE ENHANCED HUD WITH SPEED DATA
+            # RIGHT SIDE ENHANCED HUD WITH TARGET PROGRESS
             right_x_start = 850  # Start position for right-side HUD
             
             # Draw semi-transparent background for enhanced HUD section
             overlay = viz_image.copy()
-            cv2.rectangle(overlay, (right_x_start - 10, 40), (1270, 500), (0, 0, 0), -1)
+            cv2.rectangle(overlay, (right_x_start - 10, 40), (1270, 550), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.7, viz_image, 0.3, 0, viz_image)
             
-            # ENHANCED HUD HEADER
-            cv2.putText(viz_image, "RACING ANALYTICS", (right_x_start, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+            # ENHANCED HUD HEADER WITH TARGET INFO
+            if lap_stats['target_laps']:
+                header_text = f"TARGET: {lap_stats['target_laps']} LAPS"
+                header_color = (0, 255, 0) if lap_stats['target_reached'] else (255, 165, 0)
+            else:
+                header_text = "UNLIMITED MODE"
+                header_color = (255, 255, 0)
+            
+            cv2.putText(viz_image, header_text, (right_x_start, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.8, header_color, 2)
+            
+            # TARGET PROGRESS BAR (if target is set)
+            if lap_stats['target_laps']:
+                progress = min(lap_stats['valid_laps_completed'] / lap_stats['target_laps'], 1.0)
+                bar_width = 300
+                bar_height = 20
+                bar_x = right_x_start
+                bar_y = 75
+                
+                # Background bar
+                cv2.rectangle(viz_image, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (50, 50, 50), -1)
+                # Progress bar
+                progress_width = int(bar_width * progress)
+                progress_color = (0, 255, 0) if lap_stats['target_reached'] else (255, 165, 0)
+                cv2.rectangle(viz_image, (bar_x, bar_y), (bar_x + progress_width, bar_y + bar_height), progress_color, -1)
+                # Border
+                cv2.rectangle(viz_image, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (255, 255, 255), 2)
+                
+                # Progress text
+                progress_text = f"{lap_stats['valid_laps_completed']}/{lap_stats['target_laps']} laps"
+                if lap_stats['target_reached']:
+                    progress_text += " ✅ COMPLETE"
+                cv2.putText(viz_image, progress_text, (bar_x + 10, bar_y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                
+                y_offset = 110  # Adjust subsequent elements down
+            else:
+                y_offset = 85
             
             # Current lap time (large and prominent)
             current_lap_formatted = self.controller.lap_counter.format_time(lap_stats['current_lap'])
-            cv2.putText(viz_image, "Current Lap:", (right_x_start, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(viz_image, current_lap_formatted, (right_x_start, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            cv2.putText(viz_image, "Current Lap:", (right_x_start, y_offset + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(viz_image, current_lap_formatted, (right_x_start, y_offset + 45), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             
             # Current speed and lap speed stats
-            cv2.putText(viz_image, f"Speed: {current_speed*3.6:.1f} km/h", (right_x_start, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(viz_image, f"Speed: {current_speed*3.6:.1f} km/h", (right_x_start, y_offset + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            
+            # Speed range indicator
+            speed_range_text = f"Range: {MIN_SPEED*3.6:.0f}-{MAX_SPEED*3.6:.0f} km/h"
+            cv2.putText(viz_image, speed_range_text, (right_x_start, y_offset + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 255), 2)
             
             # Current lap speed statistics if available
             if lap_stats['current_lap_speeds']:
                 current_speeds = lap_stats['current_lap_speeds']
                 current_avg_speed = np.mean(current_speeds)
                 current_max_speed = max(current_speeds)
-                cv2.putText(viz_image, f"Lap Avg: {current_avg_speed:.1f} km/h", (right_x_start, 165), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                cv2.putText(viz_image, f"Lap Max: {current_max_speed:.1f} km/h", (right_x_start, 185), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, f"Lap Avg: {current_avg_speed:.1f} km/h", (right_x_start, y_offset + 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, f"Lap Max: {current_max_speed:.1f} km/h", (right_x_start, y_offset + 130), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
             # Total race time
             total_race_formatted = self.controller.lap_counter.format_time(lap_stats['total_race'])
-            cv2.putText(viz_image, "Total Race:", (right_x_start, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-            cv2.putText(viz_image, total_race_formatted, (right_x_start, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(viz_image, "Total Race:", (right_x_start, y_offset + 155), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            cv2.putText(viz_image, total_race_formatted, (right_x_start, y_offset + 175), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             # Laps completed (show both total detections and valid laps)
-            cv2.putText(viz_image, f"Total Laps: {lap_stats['laps_completed']}", (right_x_start, 255), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
-            cv2.putText(viz_image, f"Valid Laps: {lap_stats['valid_laps_completed']}", (right_x_start, 275), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(viz_image, f"Total Laps: {lap_stats['laps_completed']}", (right_x_start, y_offset + 200), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
+            cv2.putText(viz_image, f"Valid Laps (>{MIN_LAP_TIME}s): {lap_stats['valid_laps_completed']}", (right_x_start, y_offset + 220), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
             
             # Best lap time and speed
             if lap_stats['best_lap'] != float('inf'):
                 best_lap_formatted = self.controller.lap_counter.format_time(lap_stats['best_lap'])
-                cv2.putText(viz_image, "Best Lap:", (right_x_start, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                cv2.putText(viz_image, best_lap_formatted, (right_x_start, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cv2.putText(viz_image, "Best Lap:", (right_x_start, y_offset + 245), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, best_lap_formatted, (right_x_start, y_offset + 265), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 
                 # Show speed for best lap if available
                 if lap_stats['lap_speed_data']:
                     best_lap_index = lap_stats['lap_times'].index(lap_stats['best_lap'])
                     if best_lap_index < len(lap_stats['lap_speed_data']):
                         best_lap_speed = lap_stats['lap_speed_data'][best_lap_index]['avg_speed']
-                        cv2.putText(viz_image, f"(@ {best_lap_speed:.1f} km/h avg)", (right_x_start, 340), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (128, 255, 128), 2)
+                        cv2.putText(viz_image, f"(@ {best_lap_speed:.1f} km/h avg)", (right_x_start, y_offset + 285), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (128, 255, 128), 2)
             else:
-                cv2.putText(viz_image, "Best Lap: --:--.---", (right_x_start, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
+                cv2.putText(viz_image, "Best Lap: --:--.---", (right_x_start, y_offset + 255), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
             
             # Last lap time and speed
             if lap_stats['last_lap'] > 0:
                 last_lap_formatted = self.controller.lap_counter.format_time(lap_stats['last_lap'])
-                cv2.putText(viz_image, "Last Lap:", (right_x_start, 365), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                cv2.putText(viz_image, last_lap_formatted, (right_x_start, 385), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                cv2.putText(viz_image, "Last Lap:", (right_x_start, y_offset + 310), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, last_lap_formatted, (right_x_start, y_offset + 330), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
                 
                 # Show speed for last lap if available
                 if lap_stats['lap_speed_data']:
                     last_speed_data = lap_stats['lap_speed_data'][-1]
                     last_avg_speed = last_speed_data['avg_speed']
-                    cv2.putText(viz_image, f"(@ {last_avg_speed:.1f} km/h avg)", (right_x_start, 405), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 128), 2)
+                    cv2.putText(viz_image, f"(@ {last_avg_speed:.1f} km/h avg)", (right_x_start, y_offset + 350), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 128), 2)
             else:
-                cv2.putText(viz_image, "Last Lap: --:--.---", (right_x_start, 375), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
-            
-            # Average lap time and speed
-            if lap_stats['average_lap'] > 0:
-                avg_lap_formatted = self.controller.lap_counter.format_time(lap_stats['average_lap'])
-                cv2.putText(viz_image, "Average:", (right_x_start, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                cv2.putText(viz_image, avg_lap_formatted, (right_x_start, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (192, 192, 192), 2)
-                
-                # Average speed across all laps
-                if lap_stats['lap_speed_data']:
-                    avg_speeds = [data['avg_speed'] for data in lap_stats['lap_speed_data']]
-                    overall_avg_speed = np.mean(avg_speeds)
-                    cv2.putText(viz_image, f"(@ {overall_avg_speed:.1f} km/h avg)", (right_x_start, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (192, 192, 192), 2)
-            else:
-                cv2.putText(viz_image, "Average: --:--.---", (right_x_start, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
+                cv2.putText(viz_image, "Last Lap: --:--.---", (right_x_start, y_offset + 320), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
             
             # Show turn statistics in compact format
             if lap_stats['current_lap_turns']:
-                cv2.putText(viz_image, "Current Lap Turns:", (right_x_start, 500), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, "Current Lap Turns:", (right_x_start, y_offset + 380), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
                 
                 current_turns = lap_stats['current_lap_turns']
                 turn_text = f"S:{current_turns['straight']} G:{current_turns['gentle']} Sh:{current_turns['sharp']}"
-                cv2.putText(viz_image, turn_text, (right_x_start, 520), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(viz_image, turn_text, (right_x_start, y_offset + 400), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            
+            # Target completion message if reached
+            if lap_stats['target_reached']:
+                cv2.putText(viz_image, "🎯 TARGET COMPLETED!", (right_x_start, y_offset + 430), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(viz_image, "Vehicle stopping...", (right_x_start, y_offset + 455), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
             return viz_image
             
@@ -1839,7 +1957,7 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
             return blank_image
     
     def run(self, model_path=None):
-        """Main execution function"""
+        """Main execution function with configurable parameters"""
         try:
             # Setup CARLA
             if not self.setup_carla():
@@ -1849,13 +1967,18 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
             if not self.setup_camera_and_controller(model_path):
                 return False
             
-            print("System ready! Using existing vehicle for racing with immediate midpoint focus.")
+            print("System ready! Using existing vehicle for racing with configurable parameters.")
             print(f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id})")
             print("🟠 Orange cones will be detected for lap counting")
-            print("⏱️  Enhanced HUD with lap times and speed data on the right side")
+            print("⏱️  Enhanced HUD with lap times and speed data")
             print("🚗 Speed tracking per lap for comprehensive analysis")
-            print("🎯 Immediate midpoint focus for precise turn handling")
-            print("📊 Press Ctrl+C to stop and generate comprehensive 5x2 racing analysis visualization")
+            print("🔧 Configurable racing system enabled")
+            print(f"📊 Configuration summary:")
+            print(f"   🎯 Target laps: {target_laps if target_laps else 'unlimited'}")
+            print(f"   ⏱️  Min lap time: {MIN_LAP_TIME}s")
+            print(f"   🚗 Speed range: {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s ({MIN_SPEED*3.6:.0f}-{MAX_SPEED*3.6:.0f} km/h)")
+            print(f"   🟠 Orange gate: {ORANGE_GATE_THRESHOLD}m threshold, {ORANGE_COOLDOWN}s cooldown")
+            print("📊 Press Ctrl+C to stop and generate comprehensive racing analysis visualization")
             print("Press 'q' in the display window to quit (if display is available)")
             print("💡 If running headless/SSH, only Ctrl+C will work to stop and generate charts")
             
@@ -1901,53 +2024,47 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
         if self.controller and hasattr(self.controller, 'lap_counter'):
             lap_stats = self.controller.lap_counter.get_lap_time_stats()
             print(f"\n{'='*60}")
-            print(f"🏁 FINAL COMPREHENSIVE RACING STATISTICS")
+            print(f"🏁 FINAL RACING STATISTICS")
             print(f"{'='*60}")
-            print(f"Total Race Time: {self.controller.lap_counter.format_time(lap_stats['total_race'])}")
-            print(f"Total Orange Gate Detections: {lap_stats['laps_completed']}")
-            print(f"Valid Laps Completed (>1min): {lap_stats['valid_laps_completed']}")
-            print(f"Distance Traveled: {self.controller.distance_traveled:.1f}m")
+            print(f"🔧 Configuration Used:")
+            print(f"   Target laps: {target_laps if target_laps else 'unlimited'}")
+            print(f"   Min lap time: {MIN_LAP_TIME}s")
+            print(f"   Speed range: {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s ({MIN_SPEED*3.6:.0f}-{MAX_SPEED*3.6:.0f} km/h)")
+            print(f"   Orange gate: {ORANGE_GATE_THRESHOLD}m threshold, {ORANGE_COOLDOWN}s cooldown")
+            print(f"📊 Race Results:")
+            print(f"   Total Race Time: {self.controller.lap_counter.format_time(lap_stats['total_race'])}")
+            print(f"   Total Orange Gate Detections: {lap_stats['laps_completed']}")
+            print(f"   Valid Laps Completed (>{MIN_LAP_TIME}s): {lap_stats['valid_laps_completed']}")
+            if lap_stats['target_laps']:
+                print(f"   Target Status: {'✅ COMPLETED' if lap_stats['target_reached'] else '🔄 IN PROGRESS'}")
+            print(f"   Distance Traveled: {self.controller.distance_traveled:.1f}m")
             
             if lap_stats['lap_times']:
-                print(f"Best Lap Time: {self.controller.lap_counter.format_time(lap_stats['best_lap'])}")
-                print(f"Average Lap Time: {self.controller.lap_counter.format_time(lap_stats['average_lap'])}")
-                print(f"Total Valid Laps: {len(lap_stats['lap_times'])}")
+                print(f"   Best Lap Time: {self.controller.lap_counter.format_time(lap_stats['best_lap'])}")
+                print(f"   Average Lap Time: {self.controller.lap_counter.format_time(lap_stats['average_lap'])}")
                 
                 # Show speed statistics
                 if lap_stats['lap_speed_data']:
                     avg_speeds = [data['avg_speed'] for data in lap_stats['lap_speed_data']]
                     max_speeds = [data['max_speed'] for data in lap_stats['lap_speed_data']]
-                    print(f"Average Speed Across All Laps: {np.mean(avg_speeds):.1f} km/h")
-                    print(f"Highest Speed Recorded: {max(max_speeds):.1f} km/h")
-                    print(f"Speed Consistency (Std Dev): {np.std(avg_speeds):.2f} km/h")
+                    print(f"   Average Speed: {np.mean(avg_speeds):.1f} km/h")
+                    print(f"   Top Speed: {max(max_speeds):.1f} km/h")
+                    print(f"   Speed Consistency: {np.std(avg_speeds):.2f} km/h std dev")
                 
                 # Show false detection statistics
                 false_detections = lap_stats['laps_completed'] - lap_stats['valid_laps_completed']
                 if false_detections > 0:
-                    print(f"False Orange Gate Detections: {false_detections} (ignored <1min)")
-                
-                print(f"\nDetailed Lap Analysis (>1min only):")
-                for i, (lap_time, turn_data) in enumerate(zip(lap_stats['lap_times'], lap_stats['lap_turn_data']), 1):
-                    marker = " ★" if abs(lap_time - lap_stats['best_lap']) < 0.01 else ""
-                    total_turns = sum(turn_data.values())
-                    
-                    speed_info = ""
-                    if i <= len(lap_stats['lap_speed_data']):
-                        speed_data = lap_stats['lap_speed_data'][i-1]
-                        speed_info = f" | Speed: {speed_data['avg_speed']:.1f} km/h avg, {speed_data['max_speed']:.1f} km/h max"
-                    
-                    print(f"  Lap {i}: {self.controller.lap_counter.format_time(lap_time)}{marker}")
-                    print(f"    Turns: S:{turn_data['straight']}, G:{turn_data['gentle']}, Sh:{turn_data['sharp']} (Total: {total_turns}){speed_info}")
+                    print(f"   False Gate Detections: {false_detections} (under {MIN_LAP_TIME}s, ignored)")
                 
                 # Generate the comprehensive racing analysis visualization
-                print(f"\n📊 Generating comprehensive racing analysis visualization for presentation...")
+                print(f"\n📊 Generating comprehensive racing analysis visualization...")
                 self.plot_comprehensive_analysis(lap_stats)
                 
             else:
-                print("No valid laps completed (all were under 1 minute)")
+                print(f"   No valid laps completed (all were under {MIN_LAP_TIME}s minimum)")
                 if lap_stats['laps_completed'] > 0:
-                    print(f"Had {lap_stats['laps_completed']} orange gate detections, but all were under 1 minute (false detections)")
-                print("📊 No lap times to visualize - complete some valid laps (>1min) first!")
+                    print(f"   Had {lap_stats['laps_completed']} orange gate detections, but all were under {MIN_LAP_TIME}s")
+                print("📊 No lap times to visualize - complete some valid laps first!")
             print(f"{'='*60}")
         
         # Cleanup camera
@@ -1957,9 +2074,6 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
             except:
                 pass
         
-        # NOTE: We don't destroy the vehicle since it was already in the world
-        # The vehicle will remain for other uses
-        
         # Close CV2 windows if display was enabled
         if hasattr(self, 'display_enabled') and self.display_enabled:
             try:
@@ -1968,28 +2082,32 @@ Average: {self.controller.lap_counter.format_time(lap_stats['average_lap'])} | T
                 pass
         
         print("Cleanup complete - existing vehicle preserved")
-        print("📊 Check your directory for the comprehensive 5x2 racing analysis PNG file!")
+        print("📊 Check your directory for the comprehensive racing analysis PNG file!")
 
 
 def main():
-    """Main function"""
-    if len(sys.argv) > 1:
-        model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
-        print(f"Using YOLO model: {model_path}")
-    else:
-        # Default model path based on your structure
-        model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
-        print(f"Using default YOLO model: {model_path}")
+    """Main function with configurable parameters"""
+    model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
     
-    # Create and run the improved smooth cone following racing system
+    print(f"🔧 CONFIGURABLE CARLA RACING SYSTEM")
+    print(f"={'='*50}")
+    print(f"📋 Current Configuration:")
+    print(f"   🎯 Target laps: {target_laps if target_laps else 'unlimited'}")
+    print(f"   ⏱️  Min lap time: {MIN_LAP_TIME}s")
+    print(f"   🚗 Speed range: {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s ({MIN_SPEED*3.6:.0f}-{MAX_SPEED*3.6:.0f} km/h)")
+    print(f"   🟠 Orange gate: {ORANGE_GATE_THRESHOLD}m threshold, {ORANGE_COOLDOWN}s cooldown")
+    print(f"💡 To modify: Edit the configuration section at the top of this file")
+    print(f"={'='*50}")
+    
+    # Create and run the racing system with configurable parameters
     racing_system = CarlaRacingSystem()
     
     try:
         success = racing_system.run(model_path)
         if success:
-            print("Smooth cone following racing system completed successfully")
+            print("Configurable racing system completed successfully")
         else:
-            print("Smooth cone following racing system failed to start")
+            print("Configurable racing system failed to start")
     except KeyboardInterrupt:
         print("\nReceived interrupt signal")
     except Exception as e:
