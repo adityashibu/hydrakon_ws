@@ -7,8 +7,12 @@ target_laps = 10  # Set to None for unlimited laps, or any number (e.g., 1, 3, 5
 MIN_LAP_TIME = 70.0  # Minimum seconds for a lap to be considered valid (default: 3.0)
 
 # Vehicle speed parameters  
-MIN_SPEED = 4.0   # Minimum vehicle speed in m/s (default: 70.0)
+MIN_SPEED = 5.0   # Minimum vehicle speed in m/s (default: 70.0)
 MAX_SPEED = 10.0  # Maximum vehicle speed in m/s (default: 100.0)
+
+# Acceleration
+# MIN_SPEED = 100.0   # Minimum vehicle speed in m/s (default: 70.0)
+# MAX_SPEED = 150.0  # Maximum vehicle speed in m/s (default: 100.0)
 
 # Orange cone detection parameters
 ORANGE_GATE_THRESHOLD = 2.0  # Distance threshold for orange gate passage in meters (default: 2.0)
@@ -366,15 +370,105 @@ class PurePursuitController:
         self.distance_traveled = 0.0
         self.last_position = None
         
+        # ACCELERATION TRACKING - NEW FEATURE
+        self.current_throttle = 0.0
+        self.current_brake = 0.0
+        self.last_velocity = 0.0
+        self.acceleration_history = deque(maxlen=10)  # Store last 10 acceleration values
+        self.control_history = deque(maxlen=10)  # Store last 10 control inputs
+        self.requested_acceleration = 0.0  # Current requested acceleration
+        self.actual_acceleration = 0.0  # Actual measured acceleration
+        
         # Initialize lap counter with enhanced timing, speed tracking, and target laps
         self.lap_counter = LapCounter(target_laps=target_laps)
         
         print(f"🚗 Controller initialized:")
         print(f"   Speed range: {MIN_SPEED:.1f} - {MAX_SPEED:.1f} m/s ({MIN_SPEED*3.6:.1f} - {MAX_SPEED*3.6:.1f} km/h)")
+        print(f"   🚀 Acceleration tracking enabled")
     
     def is_target_reached(self):
         """Check if target laps have been reached"""
         return self.lap_counter.target_reached
+    
+    def calculate_requested_acceleration(self, throttle, brake, current_speed):
+        """Calculate the acceleration being requested from CARLA based on control inputs"""
+        # Approximate CARLA vehicle acceleration characteristics
+        max_acceleration = 3.0  # m/s² (typical car acceleration)
+        max_deceleration = -8.0  # m/s² (typical car braking)
+        
+        if throttle > 0 and brake == 0:
+            # Throttle applied - calculate forward acceleration
+            # Consider speed-dependent acceleration (less acceleration at higher speeds)
+            speed_factor = max(0.1, 1.0 - (current_speed / self.max_speed) * 0.7)
+            requested_accel = throttle * max_acceleration * speed_factor
+        elif brake > 0 and throttle == 0:
+            # Brake applied - calculate deceleration
+            requested_accel = -brake * abs(max_deceleration)
+        elif throttle > 0 and brake > 0:
+            # Both applied (shouldn't happen in normal operation)
+            net_input = throttle - brake
+            if net_input > 0:
+                speed_factor = max(0.1, 1.0 - (current_speed / self.max_speed) * 0.7)
+                requested_accel = net_input * max_acceleration * speed_factor
+            else:
+                requested_accel = net_input * abs(max_deceleration)
+        else:
+            # Neither applied - engine braking/coast
+            if current_speed > 0:
+                requested_accel = -0.5  # Light deceleration due to drag/engine braking
+            else:
+                requested_accel = 0.0
+        
+        return requested_accel
+    
+    def calculate_actual_acceleration(self, current_velocity):
+        """Calculate actual acceleration from velocity changes"""
+        if self.last_velocity is not None:
+            dt = 0.05  # Assuming 20 Hz control loop
+            accel = (current_velocity - self.last_velocity) / dt
+            self.acceleration_history.append(accel)
+            
+            # Smooth the acceleration measurement
+            if len(self.acceleration_history) >= 3:
+                smoothed_accel = np.mean(list(self.acceleration_history)[-3:])
+            else:
+                smoothed_accel = accel
+            
+            self.actual_acceleration = smoothed_accel
+        
+        self.last_velocity = current_velocity
+        return self.actual_acceleration
+    
+    def update_acceleration_tracking(self, throttle, brake, current_velocity):
+        """Update acceleration tracking with current control inputs and velocity"""
+        # Calculate requested acceleration based on control inputs
+        self.current_throttle = throttle
+        self.current_brake = brake
+        self.requested_acceleration = self.calculate_requested_acceleration(throttle, brake, current_velocity)
+        
+        # Calculate actual acceleration from velocity changes
+        self.calculate_actual_acceleration(current_velocity)
+        
+        # Store control history for analysis
+        self.control_history.append({
+            'throttle': throttle,
+            'brake': brake,
+            'requested_accel': self.requested_acceleration,
+            'actual_accel': self.actual_acceleration,
+            'timestamp': time.time()
+        })
+    
+    def get_acceleration_stats(self):
+        """Get acceleration statistics for display"""
+        return {
+            'current_throttle': self.current_throttle,
+            'current_brake': self.current_brake,
+            'requested_acceleration': self.requested_acceleration,
+            'actual_acceleration': self.actual_acceleration,
+            'avg_requested_accel': np.mean([h['requested_accel'] for h in self.control_history]) if self.control_history else 0.0,
+            'avg_actual_accel': np.mean([h['actual_accel'] for h in self.control_history]) if self.control_history else 0.0,
+            'acceleration_efficiency': (self.actual_acceleration / self.requested_acceleration * 100) if self.requested_acceleration != 0 else 100.0
+        }
     
     def detect_turn_type_from_cones(self, blue_cones, yellow_cones):
         """Detect turn type and direction from cone patterns - limited to first 3 pairs"""
@@ -864,7 +958,7 @@ class PurePursuitController:
             print(f"Error updating distance: {e}")
     
     def control_vehicle(self, cone_detections):
-        """Main control function with smooth cone line following and target lap checking"""
+        """Main control function with smooth cone line following, target lap checking, and acceleration tracking"""
         try:
             print(f"\n{'='*60}")
             print(f"DEBUG: CONTROL CYCLE - {len(cone_detections) if cone_detections else 0} detections")
@@ -887,6 +981,12 @@ class PurePursuitController:
                 control.throttle = 0.0
                 control.brake = 1.0
                 self.vehicle.apply_control(control)
+                
+                # Update acceleration tracking for the stop command
+                velocity = self.vehicle.get_velocity()
+                current_speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
+                self.update_acceleration_tracking(0.0, 1.0, current_speed)
+                
                 return 0.0, 0.0  # Return zero values to indicate stopping
             
             # Update distance traveled
@@ -924,6 +1024,10 @@ class PurePursuitController:
                     control.throttle = 0.2  # Slower while recovering
                     control.brake = 0.0
                     self.vehicle.apply_control(control)
+                    
+                    # Update acceleration tracking
+                    self.update_acceleration_tracking(0.2, 0.0, current_speed)
+                    
                     return recovery_steering, 0.2
                 elif self.lost_track_counter <= 20:
                     # More aggressive search pattern
@@ -935,6 +1039,10 @@ class PurePursuitController:
                     control.throttle = 0.15
                     control.brake = 0.0
                     self.vehicle.apply_control(control)
+                    
+                    # Update acceleration tracking
+                    self.update_acceleration_tracking(0.15, 0.0, current_speed)
+                    
                     return search_steering, 0.15
                 else:
                     # Last resort - wide search
@@ -944,6 +1052,10 @@ class PurePursuitController:
                     control.throttle = 0.1
                     control.brake = 0.0
                     self.vehicle.apply_control(control)
+                    
+                    # Update acceleration tracking
+                    self.update_acceleration_tracking(0.1, 0.0, current_speed)
+                    
                     return search_steering, 0.1
             
             # Calculate smooth cone following target
@@ -962,6 +1074,10 @@ class PurePursuitController:
                     control.throttle = 0.15
                     control.brake = 0.0
                     self.vehicle.apply_control(control)
+                    
+                    # Update acceleration tracking
+                    self.update_acceleration_tracking(0.15, 0.0, current_speed)
+                    
                     return search_steering, 0.15
                 else:
                     # Move forward slowly while searching
@@ -970,6 +1086,10 @@ class PurePursuitController:
                     control.throttle = 0.15
                     control.brake = 0.0
                     self.vehicle.apply_control(control)
+                    
+                    # Update acceleration tracking
+                    self.update_acceleration_tracking(0.15, 0.0, current_speed)
+                    
                     return self.last_steering * 0.5, 0.15
             
             # Reset lost track counter if we found something
@@ -1018,8 +1138,12 @@ class PurePursuitController:
             
             self.vehicle.apply_control(control)
             
-            # Enhanced debug output
+            # UPDATE ACCELERATION TRACKING - NEW FEATURE
+            self.update_acceleration_tracking(control.throttle, control.brake, current_speed)
+            
+            # Enhanced debug output with acceleration info
             direction = 'LEFT' if smooth_steering > 0 else 'RIGHT' if smooth_steering < 0 else 'STRAIGHT'
+            accel_stats = self.get_acceleration_stats()
             
             print(f"DEBUG: APPLIED CONTROL:")
             print(f"  Navigation: {navigation_target.get('type', 'cone_following')}_{turn_type}")
@@ -1030,6 +1154,8 @@ class PurePursuitController:
             print(f"  Steering: {smooth_steering:.3f} ({direction})")
             print(f"  Throttle: {control.throttle:.2f}")
             print(f"  Brake: {control.brake:.2f}")
+            print(f"  🚀 Requested Acceleration: {accel_stats['requested_acceleration']:.2f} m/s²")
+            print(f"  📊 Actual Acceleration: {accel_stats['actual_acceleration']:.2f} m/s²")
             print(f"  Current Speed: {current_speed:.1f} m/s ({current_speed*3.6:.1f} km/h)")
             print(f"  Target Speed: {target_speed:.1f} m/s ({target_speed*3.6:.1f} km/h)")
             print(f"  Distance: {self.distance_traveled:.1f}m")
@@ -1049,6 +1175,11 @@ class PurePursuitController:
             control.throttle = 0.0
             control.brake = 0.5
             self.vehicle.apply_control(control)
+            
+            # Update acceleration tracking for safe fallback
+            velocity = self.vehicle.get_velocity()
+            current_speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
+            self.update_acceleration_tracking(0.0, 0.5, current_speed)
             
             return 0.0, 0.0
 
@@ -1648,6 +1779,7 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
             print("Camera and improved cone following controller setup complete")
             print(f"Lap counter with timing and speed tracking enabled - orange cones will be detected for lap counting")
             print(f"Enhanced with smooth cone line following and early turn detection")
+            print(f"🚀 NEW: Acceleration tracking and display enabled")
             if target_laps:
                 print(f"🎯 TARGET SET: Will stop automatically after {target_laps} valid laps")
             else:
@@ -1661,8 +1793,9 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
     
     def control_loop(self):
         """Main control loop for vehicle with target lap checking"""
-        print("Starting configurable cone following control loop...")
+        print("Starting configurable cone following control loop with acceleration tracking...")
         print(f"🔧 Configuration: Target {target_laps if target_laps else 'unlimited'} laps | Min lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s")
+        print(f"🚀 Acceleration tracking: Requested vs Actual acceleration will be monitored")
         
         while self.running:
             try:
@@ -1696,15 +1829,15 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
                 time.sleep(0.1)  # Brief pause before retrying
     
     def display_loop(self):
-        """Display camera feed with detections and enhanced speed HUD including target progress"""
-        print("Starting display loop...")
+        """Display camera feed with detections and enhanced speed HUD including target progress and acceleration"""
+        print("Starting display loop with acceleration tracking...")
         
         # Set CV2 to not use Qt backend if possible
         try:
-            cv2.namedWindow('CARLA Racing - Configurable Parameters', cv2.WINDOW_AUTOSIZE)
+            cv2.namedWindow('CARLA Racing - Acceleration Tracking', cv2.WINDOW_AUTOSIZE)
         except Exception as e:
             print(f"Warning: Could not create CV2 window: {e}")
-            print("Running in headless mode - visualization disabled but lap timing and speed tracking will still work")
+            print("Running in headless mode - visualization disabled but lap timing, speed tracking and acceleration tracking will still work")
             # Set flag to disable display
             self.display_enabled = False
             return
@@ -1717,7 +1850,7 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
                     # Create visualization
                     viz_image = self.create_visualization()
                     
-                    cv2.imshow('CARLA Racing - Configurable Parameters', viz_image)
+                    cv2.imshow('CARLA Racing - Acceleration Tracking', viz_image)
                     
                     # Check for exit key
                     key = cv2.waitKey(1) & 0xFF
@@ -1735,7 +1868,7 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
                 time.sleep(0.1)
     
     def create_visualization(self):
-        """Create enhanced visualization with configurable parameters shown in HUD"""
+        """Create enhanced visualization with acceleration tracking shown in HUD"""
         try:
             if not hasattr(self.camera, 'rgb_image') or self.camera.rgb_image is None:
                 return np.zeros((720, 1280, 3), dtype=np.uint8)
@@ -1808,11 +1941,17 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
             # Get lap timing and speed statistics
             lap_stats = self.controller.lap_counter.get_lap_time_stats()
             
-            # LEFT SIDE STATUS WITH CONFIGURATION INFO
+            # Get acceleration statistics - NEW FEATURE
+            accel_stats = self.controller.get_acceleration_stats()
+            
+            # LEFT SIDE STATUS WITH CONFIGURATION INFO AND ACCELERATION
             left_status_text = [
-                f"Mode: Configurable Racing System",
+                f"Mode: Acceleration Tracking System",
                 f"Config: Target {target_laps if target_laps else 'unlimited'} | MinLap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s",
                 f"Orange Gate: {ORANGE_GATE_THRESHOLD}m threshold | {ORANGE_COOLDOWN}s cooldown",
+                f"Throttle: {accel_stats['current_throttle']:.3f} | Brake: {accel_stats['current_brake']:.3f}",
+                f"Requested Accel: {accel_stats['requested_acceleration']:.2f}",
+                f"Actual Accel: {accel_stats['actual_acceleration']:.2f}",
                 f"Cones - Blue: {len([d for d in cone_detections if d.get('cls') == 1])} | Yellow: {len([d for d in cone_detections if d.get('cls') == 0])} | Orange: {len([d for d in cone_detections if d.get('cls') == 2])}",
                 f"Current Speed: {current_speed:.1f} m/s ({current_speed*3.6:.1f} km/h)",
                 f"Distance: {self.controller.distance_traveled:.1f}m"
@@ -1822,21 +1961,37 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
                 y_pos = 50 + i*22  # Start lower to avoid vehicle info
                 color = (0, 255, 0)
                 if i == 0:  # Mode info
-                    color = (255, 255, 0)  # Yellow for configurable mode
+                    color = (255, 255, 0)  # Yellow for acceleration tracking mode
                 elif i == 1:  # Config line
                     color = (255, 165, 0)  # Orange for configuration
                 elif i == 2:  # Orange gate config
                     color = (255, 100, 0)  # Orange for gate config
-                elif i == 4:  # Current speed
+                elif i == 3:  # Throttle/Brake
+                    color = (255, 0, 255)  # Magenta for control inputs
+                elif i == 4:  # Requested acceleration
+                    color = (0, 255, 255)  # Cyan for requested acceleration
+                elif i == 5:  # Actual acceleration
+                    # Color code actual acceleration based on value
+                    if accel_stats['actual_acceleration'] > 2.0:
+                        color = (0, 255, 0)  # Green for strong acceleration
+                    elif accel_stats['actual_acceleration'] > 0.5:
+                        color = (0, 255, 255)  # Cyan for moderate acceleration
+                    elif accel_stats['actual_acceleration'] < -3.0:
+                        color = (0, 0, 255)  # Red for strong braking
+                    elif accel_stats['actual_acceleration'] < -1.0:
+                        color = (0, 165, 255)  # Orange for moderate braking
+                    else:
+                        color = (255, 255, 255)  # White for minimal acceleration
+                elif i == 7:  # Current speed
                     color = (0, 255, 255)  # Cyan for current speed
                 cv2.putText(viz_image, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
             
-            # RIGHT SIDE ENHANCED HUD WITH TARGET PROGRESS
+            # RIGHT SIDE ENHANCED HUD WITH TARGET PROGRESS AND ACCELERATION DETAILS
             right_x_start = 850  # Start position for right-side HUD
             
             # Draw semi-transparent background for enhanced HUD section
             overlay = viz_image.copy()
-            cv2.rectangle(overlay, (right_x_start - 10, 40), (1270, 550), (0, 0, 0), -1)
+            cv2.rectangle(overlay, (right_x_start - 10, 40), (1270, 620), (0, 0, 0), -1)  # Made taller for acceleration data
             cv2.addWeighted(overlay, 0.7, viz_image, 0.3, 0, viz_image)
             
             # ENHANCED HUD HEADER WITH TARGET INFO
@@ -1875,6 +2030,41 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
                 y_offset = 110  # Adjust subsequent elements down
             else:
                 y_offset = 85
+            
+            # ACCELERATION SECTION - NEW FEATURE
+            cv2.putText(viz_image, "ACCELERATION TRACKING:", (right_x_start, y_offset + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            
+            # Acceleration bars visualization
+            accel_bar_y = y_offset + 35
+            accel_bar_height = 15
+            accel_bar_width = 200
+            
+            # Requested acceleration bar
+            cv2.putText(viz_image, "Requested:", (right_x_start, accel_bar_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            req_accel_normalized = np.clip((accel_stats['requested_acceleration'] + 8) / 16, 0, 1)  # Normalize from -8 to +8 m/s²
+            req_bar_width = int(accel_bar_width * req_accel_normalized)
+            req_color = (0, 255, 0) if accel_stats['requested_acceleration'] > 0 else (0, 0, 255)
+            cv2.rectangle(viz_image, (right_x_start + 90, accel_bar_y), (right_x_start + 90 + req_bar_width, accel_bar_y + accel_bar_height), req_color, -1)
+            cv2.rectangle(viz_image, (right_x_start + 90, accel_bar_y), (right_x_start + 90 + accel_bar_width, accel_bar_y + accel_bar_height), (255, 255, 255), 1)
+            cv2.putText(viz_image, f"{accel_stats['requested_acceleration']:.2f}", (right_x_start + 300, accel_bar_y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, req_color, 2)
+            
+            # Actual acceleration bar
+            actual_bar_y = accel_bar_y + 25
+            cv2.putText(viz_image, "Actual:", (right_x_start, actual_bar_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            actual_accel_normalized = np.clip((accel_stats['actual_acceleration'] + 8) / 16, 0, 1)  # Normalize from -8 to +8 m/s²
+            actual_bar_width = int(accel_bar_width * actual_accel_normalized)
+            actual_color = (0, 255, 0) if accel_stats['actual_acceleration'] > 0 else (0, 0, 255)
+            cv2.rectangle(viz_image, (right_x_start + 90, actual_bar_y), (right_x_start + 90 + actual_bar_width, actual_bar_y + accel_bar_height), actual_color, -1)
+            cv2.rectangle(viz_image, (right_x_start + 90, actual_bar_y), (right_x_start + 90 + accel_bar_width, actual_bar_y + accel_bar_height), (255, 255, 255), 1)
+            cv2.putText(viz_image, f"{accel_stats['actual_acceleration']:.2f}", (right_x_start + 300, actual_bar_y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, actual_color, 2)
+            
+            # Acceleration efficiency
+            efficiency = accel_stats['acceleration_efficiency']
+            efficiency_color = (0, 255, 0) if 90 <= efficiency <= 110 else (255, 165, 0) if 70 <= efficiency <= 130 else (0, 0, 255)
+            cv2.putText(viz_image, f"Efficiency: {efficiency:.1f}%", (right_x_start, actual_bar_y + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, efficiency_color, 2)
+            
+            # Update y_offset for remaining elements
+            y_offset += 105
             
             # Current lap time (large and prominent)
             current_lap_formatted = self.controller.lap_counter.format_time(lap_stats['current_lap'])
@@ -1957,7 +2147,7 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
             return blank_image
     
     def run(self, model_path=None):
-        """Main execution function with configurable parameters"""
+        """Main execution function with configurable parameters and acceleration tracking"""
         try:
             # Setup CARLA
             if not self.setup_carla():
@@ -1967,17 +2157,19 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
             if not self.setup_camera_and_controller(model_path):
                 return False
             
-            print("System ready! Using existing vehicle for racing with configurable parameters.")
+            print("System ready! Using existing vehicle for racing with acceleration tracking.")
             print(f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id})")
             print("🟠 Orange cones will be detected for lap counting")
             print("⏱️  Enhanced HUD with lap times and speed data")
             print("🚗 Speed tracking per lap for comprehensive analysis")
+            print("🚀 NEW: Acceleration tracking enabled - monitoring requested vs actual acceleration")
             print("🔧 Configurable racing system enabled")
             print(f"📊 Configuration summary:")
             print(f"   🎯 Target laps: {target_laps if target_laps else 'unlimited'}")
             print(f"   ⏱️  Min lap time: {MIN_LAP_TIME}s")
             print(f"   🚗 Speed range: {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s ({MIN_SPEED*3.6:.0f}-{MAX_SPEED*3.6:.0f} km/h)")
             print(f"   🟠 Orange gate: {ORANGE_GATE_THRESHOLD}m threshold, {ORANGE_COOLDOWN}s cooldown")
+            print(f"   🚀 Acceleration range: -8.0 to +3.0 m/s² (typical car performance)")
             print("📊 Press Ctrl+C to stop and generate comprehensive racing analysis visualization")
             print("Press 'q' in the display window to quit (if display is available)")
             print("💡 If running headless/SSH, only Ctrl+C will work to stop and generate charts")
@@ -2023,14 +2215,22 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
         # Print final race statistics and generate comprehensive plot
         if self.controller and hasattr(self.controller, 'lap_counter'):
             lap_stats = self.controller.lap_counter.get_lap_time_stats()
+            accel_stats = self.controller.get_acceleration_stats()
+            
             print(f"\n{'='*60}")
-            print(f"🏁 FINAL RACING STATISTICS")
+            print(f"🏁 FINAL RACING STATISTICS WITH ACCELERATION DATA")
             print(f"{'='*60}")
             print(f"🔧 Configuration Used:")
             print(f"   Target laps: {target_laps if target_laps else 'unlimited'}")
             print(f"   Min lap time: {MIN_LAP_TIME}s")
             print(f"   Speed range: {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s ({MIN_SPEED*3.6:.0f}-{MAX_SPEED*3.6:.0f} km/h)")
             print(f"   Orange gate: {ORANGE_GATE_THRESHOLD}m threshold, {ORANGE_COOLDOWN}s cooldown")
+            print(f"🚀 Acceleration Performance:")
+            print(f"   Average Requested: {accel_stats['avg_requested_accel']:.2f} m/s²")
+            print(f"   Average Actual: {accel_stats['avg_actual_accel']:.2f} m/s²")
+            print(f"   Overall Efficiency: {accel_stats['acceleration_efficiency']:.1f}%")
+            print(f"   Final Throttle: {accel_stats['current_throttle']:.3f}")
+            print(f"   Final Brake: {accel_stats['current_brake']:.3f}")
             print(f"📊 Race Results:")
             print(f"   Total Race Time: {self.controller.lap_counter.format_time(lap_stats['total_race'])}")
             print(f"   Total Orange Gate Detections: {lap_stats['laps_completed']}")
@@ -2083,31 +2283,40 @@ Config: Min Lap {MIN_LAP_TIME}s | Speed {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s | Or
         
         print("Cleanup complete - existing vehicle preserved")
         print("📊 Check your directory for the comprehensive racing analysis PNG file!")
+        print("🚀 Acceleration tracking data has been integrated into the analysis!")
 
 
 def main():
-    """Main function with configurable parameters"""
+    """Main function with configurable parameters and acceleration tracking"""
     model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
     
-    print(f"🔧 CONFIGURABLE CARLA RACING SYSTEM")
-    print(f"={'='*50}")
+    print(f"🚀 CARLA RACING SYSTEM WITH ACCELERATION TRACKING")
+    print(f"={'='*60}")
     print(f"📋 Current Configuration:")
     print(f"   🎯 Target laps: {target_laps if target_laps else 'unlimited'}")
     print(f"   ⏱️  Min lap time: {MIN_LAP_TIME}s")
     print(f"   🚗 Speed range: {MIN_SPEED:.0f}-{MAX_SPEED:.0f} m/s ({MIN_SPEED*3.6:.0f}-{MAX_SPEED*3.6:.0f} km/h)")
     print(f"   🟠 Orange gate: {ORANGE_GATE_THRESHOLD}m threshold, {ORANGE_COOLDOWN}s cooldown")
+    print(f"   🚀 Acceleration tracking: Requested vs Actual acceleration monitoring")
+    print(f"   🚀 Control inputs: Throttle and Brake values displayed")
+    print(f"   🚀 Efficiency calculation: Performance ratio between requested and actual")
     print(f"💡 To modify: Edit the configuration section at the top of this file")
-    print(f"={'='*50}")
+    print(f"📊 NEW FEATURES:")
+    print(f"   - Real-time acceleration display in HUD")
+    print(f"   - Throttle/Brake input monitoring")
+    print(f"   - Acceleration efficiency tracking")
+    print(f"   - Color-coded acceleration visualization")
+    print(f"={'='*60}")
     
-    # Create and run the racing system with configurable parameters
+    # Create and run the racing system with acceleration tracking
     racing_system = CarlaRacingSystem()
     
     try:
         success = racing_system.run(model_path)
         if success:
-            print("Configurable racing system completed successfully")
+            print("Racing system with acceleration tracking completed successfully")
         else:
-            print("Configurable racing system failed to start")
+            print("Racing system with acceleration tracking failed to start")
     except KeyboardInterrupt:
         print("\nReceived interrupt signal")
     except Exception as e:
