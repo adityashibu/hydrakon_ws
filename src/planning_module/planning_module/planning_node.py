@@ -4,11 +4,11 @@
 target_laps = 10  # Set to None for unlimited laps, or any number (e.g., 1, 3, 5, 10)
 
 # Lap validation parameters
-MIN_LAP_TIME = 70.0  # Minimum seconds for a lap to be considered valid (default: 3.0)
+MIN_LAP_TIME = 150.0  # Minimum seconds for a lap to be considered valid (default: 3.0)
 
 # Vehicle speed parameters  
-MIN_SPEED = 5.0   # Minimum vehicle speed in m/s (default: 70.0)
-MAX_SPEED = 10.0  # Maximum vehicle speed in m/s (default: 100.0)
+MIN_SPEED = 2.0   # Minimum vehicle speed in m/s (default: 70.0)
+MAX_SPEED = 3.0  # Maximum vehicle speed in m/s (default: 100.0)
 
 # Acceleration
 # MIN_SPEED = 100.0   # Minimum vehicle speed in m/s (default: 70.0)

@@ -98,10 +98,10 @@ class VehicleNode(Node):
             self.get_logger().info(f"Using vehicle blueprint: {vehicle_bp.id}")
             
             # Trackdrive spawn point
-            # spawn_transform = carla.Transform(
-            #     carla.Location(x=-35.0, y=0.0, z=5.0),
-            #     carla.Rotation(pitch=0.0, yaw=0.0, roll=0.0)
-            # )
+            spawn_transform = carla.Transform(
+                carla.Location(x=-35.0, y=0.0, z=5.0),
+                carla.Rotation(pitch=0.0, yaw=0.0, roll=0.0)
+            )
 
             # Autocross spawn point
             # spawn_transform = carla.Transform(
@@ -116,10 +116,10 @@ class VehicleNode(Node):
             # )
 
             # Acceleration spawn point
-            spawn_transform = carla.Transform(
-                carla.Location(x=-90.0, y=-92.0, z=5.0),
-                carla.Rotation(pitch=0.0, yaw=0.0, roll=0.0)
-            )
+            # spawn_transform = carla.Transform(
+            #     carla.Location(x=-90.0, y=-92.0, z=5.0),
+            #     carla.Rotation(pitch=0.0, yaw=0.0, roll=0.0)
+            # )
             
             vehicle = self.world.try_spawn_actor(vehicle_bp, spawn_transform)
             
