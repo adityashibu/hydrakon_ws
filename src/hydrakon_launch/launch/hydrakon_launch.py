@@ -1,16 +1,23 @@
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, TimerAction
+from launch.actions import ExecuteProcess, TimerAction, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+import os
+from ament_index_python.packages import get_package_share_directory
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
-    return LaunchDescription([
 
+    return LaunchDescription([
+        # CARLA cleanup script
         ExecuteProcess(
             cmd=['/usr/bin/python3', '/home/aditya/hydrakon_ws/scripts/carla_cleanup.py'],
             shell=False,
             output='screen'
         ),
 
+        # Static Transform Publishers
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -27,14 +34,6 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # Node(
-        # package='tf2_ros',
-        # executable='static_transform_publisher',
-        # name='map_to_base_link_tf',
-        # arguments=['0', '0', '0', '0', '0', '0', 'map', 'base_link'],
-        # output='screen'
-        # ),
-
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -43,6 +42,7 @@ def generate_launch_description():
             output='screen'
         ),
 
+        # Vehicle Manager
         Node(
             package='carla_vehicle_manager',
             executable='vehicle_node',
@@ -51,6 +51,7 @@ def generate_launch_description():
             parameters=['config/vehicle_params.yaml']
         ),
 
+        # IMU Node (delayed start)
         TimerAction(
             period=2.0,
             actions=[
@@ -64,6 +65,7 @@ def generate_launch_description():
             ]
         ),
 
+        # GNSS Node (delayed start)
         TimerAction(
             period=2.0,
             actions=[
@@ -77,6 +79,7 @@ def generate_launch_description():
             ]
         ),
 
+        # NavSat Transform Node
         TimerAction(
             period=3.0,
             actions=[
@@ -90,6 +93,7 @@ def generate_launch_description():
             ]
         ),
 
+        # EKF Node (Extended Kalman Filter for localization)
         TimerAction(
             period=4.0,
             actions=[
@@ -139,6 +143,7 @@ def generate_launch_description():
             ]
         ),
         
+        # LiDAR Handler
         TimerAction(
             period=2.0,
             actions=[
@@ -151,45 +156,50 @@ def generate_launch_description():
                 )
             ]
         ),
-        TimerAction(
-            period=2.0,
-            actions=[
-                Node(
-                    package='zed2i_camera_sim',
-                    executable='zed_node',
-                    name='zed_camera_sim_node',
-                    output='screen',
-                    parameters=['config/zed_camera_params.yaml']
-                )
-            ]
-        ),
 
-        # TimerAction(
-        #     period=5.0,  # Start after other systems are initialized
-        #     actions=[
-        #         Node(
-        #             package='planning_module',
-        #             executable='planning_node',
-        #             name='planning_node',
-        #             output='screen',
-        #             parameters=['/home/aditya/hydrakon_ws/src/planning_module/config/planning_params.yaml']
-        #         )
-        #     ]
-        # ),
-
-        # Node(
-        #     package='rviz2',
-        #     executable='rviz2',
-        #     name='rviz2',
-        #     arguments=['-d', 'config/setup_config.rviz'],
-        #     output='screen'
-        # )
-
+        # LiDAR Cluster Node
         Node(
             package='lidar_cluster',
             executable='lidar_cluster_node',
             name='lidar_cluster_node',
             output='screen',
             parameters=['config/lidar_cluster.yaml']
-        )
+        ),
+
+        TimerAction(
+            period=6.0,
+            actions=[
+                Node(
+                    package='planning_module',
+                    executable='planning_node',
+                    name='planning_node',
+                    output='screen',
+                    parameters=[
+                        PathJoinSubstitution([
+                            FindPackageShare('planning_module'),
+                            'config',
+                            'planning_params.yaml'
+                        ])
+                    ]
+                )
+            ]
+        ),
+
+        # # CONTROL MODULE - Single Launch (handles all control nodes internally)
+        # TimerAction(
+        #     period=7.0,  # Start after planning is ready
+        #     actions=[
+        #         IncludeLaunchDescription(
+        #             PythonLaunchDescriptionSource([
+        #                 get_package_share_directory('control_module'),
+        #                 '/launch/control_system.launch.py'
+        #             ]),
+        #             launch_arguments={
+        #                 'use_carla': 'true',
+        #                 'carla_host': 'localhost',
+        #                 'carla_port': '2000'
+        #             }.items()
+        #         )
+        #     ]
+        # ),
     ])

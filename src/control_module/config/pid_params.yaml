@@ -1,0 +1,48 @@
+/**:
+  ros__parameters:
+    # PID Controller Parameters
+    # Proportional gain
+    speed_kp: 1.2
+    # Integral gain
+    speed_ki: 0.3
+    # Derivative gain
+    speed_kd: 0.1
+    # Integral windup limit
+    speed_integral_limit: 3.0
+    
+    # Acceleration/Deceleration Limits
+    # Max acceleration m/s²
+    max_acceleration: 4.0
+    # Max deceleration m/s²
+    max_deceleration: -6.0
+    # Emergency brake m/s²
+    emergency_decel: -8.0
+    
+    # Speed and Timing
+    # Speed limit m/s
+    max_speed_limit: 15.0
+    # Control loop Hz
+    control_frequency: 50.0
+    
+    # Vehicle Interface Parameters
+    # CARLA connection
+    carla_host: 'localhost'
+    carla_port: 2000
+    carla_timeout: 10.0
+    command_timeout: 0.5
+    feedback_enabled: true
+    
+    # Vehicle dynamics
+    max_steering_angle: 0.7
+    max_throttle: 1.0
+    max_brake: 1.0
+    accel_to_throttle_gain: 0.25
+    decel_to_brake_gain: 0.15
+    
+    # Speed Processing Parameters
+    # IMU topic name
+    imu_topic: '/imu/data'
+    # Filter smoothing factor
+    filter_alpha: 0.9
+    # Gravity compensation
+    gravity_compensation: true

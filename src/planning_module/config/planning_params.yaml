@@ -1,24 +1,82 @@
-# Pure Pursuit Planning Parameters
+# CARLA Racing System Parameters - Corrected Version
+# Node name must match the name used in launch file
 
-planning_node:
+planning_node:  # This matches the name used in launch file
   ros__parameters:
-    # Pure Pursuit Parameters
-    lookahead_distance: 8.0        # meters - distance to look ahead for target point
-    wheelbase: 2.7                 # meters - vehicle wheelbase (typical Formula Student)
-    max_steering_angle: 0.52       # radians (~30 degrees max steering)
     
-    # CARLA Connection
-    carla_host: "localhost"
-    carla_port: 2000
+    # Vehicle parameters
+    vehicle:
+      wheelbase: 2.7                    # meters
+      max_steering_degrees: 30.0        # degrees
     
-    # Speed Control Parameters
-    target_speed: 15.0             # m/s - desired speed
-    speed_kp: 0.3                  # proportional gain for speed control
-    brake_kp: 0.5                  # proportional gain for braking
+   # Control parameters
+    control:
+      max_speed: 15.0 # m/s
+      min_speed: 7.0 # m/s
+      lookahead_distance: 4.0 # Pure pursuit lookahead distance in meters
+    # Camera parameters
+    camera:
+      fov_horizontal: 110.0             # degrees - ZED 2i FOV
+      resolution_width: 1280            # pixels
+      resolution_height: 720            # pixels
+      fps: 30                          # frames per second
     
-    # Path Planning Parameters
-    path_update_rate: 10.0         # Hz - how often to update the reference path
-    min_cones_for_path: 4          # minimum number of cones needed to generate a path
+    # Detection parameters
+    detection:
+      safety_offset: 0.5                # meters from cones
+      max_depth: 8.0                    # maximum cone detection range
+      min_depth: 1.5                    # minimum cone detection range
+      max_lateral_distance: 4.0         # maximum lateral distance from vehicle center
     
-    # Safety Parameters
-    emergency_brake_distance: 3.0   # meters - distance to emergency brake if no path
+    # Turn parameters
+    turns:
+      min_turn_radius: 3.5              # minimum safe turning radius (meters)
+      path_widening_factor: 1.8         # how much to widen the path in turns
+      sharp_turn_threshold: 25.0        # angle threshold for sharp turns (degrees)
+      u_turn_threshold: 60.0            # angle threshold for U-turns (degrees)
+      turn_detection_distance: 6.0      # distance to look ahead for turn detection
+    
+    # Track parameters
+    track:
+      width_min: 3.0                    # minimum track width (meters)
+      width_max: 5.0                    # maximum track width (meters)
+      max_depth_diff: 1.0               # maximum depth difference between gate cones
+      max_lateral_jump: 1.5             # maximum lateral movement between consecutive gates
+      forward_focus_angle: 30.0         # only consider cones within this angle (degrees)
+    
+    # Visibility parameters
+    visibility:
+      high_risk_threshold: 2.5          # high risk threshold for cone visibility
+      moderate_risk_threshold: 1.8      # moderate risk threshold for cone visibility
+      visibility_steering_boost: 0.6    # steering boost factor for cone visibility preservation
+      high_risk_factor: 1.4             # high risk steering factor multiplier
+      moderate_risk_factor: 1.2         # moderate risk steering factor multiplier
+    
+    # Recovery parameters
+    recovery:
+      max_lost_track_frames: 20         # maximum frames before triggering emergency stop
+      recovery_steering_multiplier: 1.5 # steering multiplier for track recovery
+      aggressive_search_amplitude: 18.0 # amplitude for aggressive search pattern (degrees)
+      wide_search_amplitude: 24.0       # amplitude for wide search pattern (degrees)
+    
+    # Lap counter parameters
+    lap_counter:
+      cooldown_duration: 3.0            # cooldown duration between lap counts (seconds)
+      orange_gate_threshold: 2.0        # distance threshold for passing through orange gate
+    
+    # System parameters
+    system:
+      control_loop_hz: 20.0             # control loop frequency (Hz)
+      display_loop_hz: 30.0             # display loop frequency (Hz)
+      enable_visualization: true        # enable OpenCV visualization window
+    
+    # CARLA connection parameters
+    carla:
+      host: "localhost"                 # CARLA server host address
+      port: 2000                        # CARLA server port number
+      timeout: 10.0                     # CARLA connection timeout (seconds)
+    
+    # Debug parameters
+    debug:
+      enable_debug_output: true         # enable debug console output
+      log_level: "INFO"                 # ROS logging level (DEBUG, INFO, WARN, ERROR)
