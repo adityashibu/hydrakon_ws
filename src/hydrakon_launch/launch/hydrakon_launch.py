@@ -185,21 +185,21 @@ def generate_launch_description():
             ]
         ),
 
-        # # CONTROL MODULE - Single Launch (handles all control nodes internally)
-        # TimerAction(
-        #     period=7.0,  # Start after planning is ready
-        #     actions=[
-        #         IncludeLaunchDescription(
-        #             PythonLaunchDescriptionSource([
-        #                 get_package_share_directory('control_module'),
-        #                 '/launch/control_system.launch.py'
-        #             ]),
-        #             launch_arguments={
-        #                 'use_carla': 'true',
-        #                 'carla_host': 'localhost',
-        #                 'carla_port': '2000'
-        #             }.items()
-        #         )
-        #     ]
-        # ),
+        # CONTROL MODULE - Single Launch (handles all control nodes internally)
+        TimerAction(
+            period=7.0,  # Start after planning is ready
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource([
+                        get_package_share_directory('control_module'),
+                        '/launch/control_system.launch.py'
+                    ]),
+                    launch_arguments={
+                        'use_carla': 'true',
+                        'carla_host': 'localhost',
+                        'carla_port': '2000'
+                    }.items()
+                )
+            ]
+        ),
     ])

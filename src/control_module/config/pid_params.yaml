@@ -6,7 +6,7 @@
     # Integral gain
     speed_ki: 0.3
     # Derivative gain
-    speed_kd: 0.1
+    speed_kd: 0.05
     # Integral windup limit
     speed_integral_limit: 3.0
     

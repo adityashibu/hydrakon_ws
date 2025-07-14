@@ -10,24 +10,190 @@ import threading
 import signal
 import sys
 from collections import deque
-from std_msgs.msg import Float64, Int32, Bool, Header
+from std_msgs.msg import Float64, Int32, Bool
 from geometry_msgs.msg import Point, Vector3
 from .zed_2i import Zed2iCamera
-from rclpy.parameter import Parameter
 from rcl_interfaces.msg import ParameterDescriptor  
 
 
 class LapCounter:
-    def __init__(self, node):
+    def __init__(self, node, target_laps=None):
         self.node = node
         self.laps_completed = 0
         self.last_orange_gate_time = 0
         self.cooldown_duration = 3.0  # 3 seconds cooldown between lap counts
         self.orange_gate_passed_threshold = 2.0  # Distance threshold for passing through orange gate
         
+        # Target laps functionality (from Node 2)
+        self.target_laps = target_laps
+        self.target_reached = False
+        
+        # Lap timing functionality (from Node 2)
+        self.race_start_time = time.time()
+        self.lap_start_time = time.time()
+        self.lap_times = []  # Store individual lap times
+        self.current_lap_time = 0.0
+        self.best_lap_time = float('inf')
+        self.last_lap_time = 0.0
+        
+        # Turn tracking for each lap (from Node 2)
+        self.current_lap_turns = {
+            'straight': 0,
+            'gentle': 0,
+            'sharp': 0
+        }
+        self.lap_turn_data = []  # Store turn counts for each completed lap
+        self.last_turn_type = "straight"
+        self.turn_change_cooldown = 1.0  # 1 second cooldown to prevent rapid turn type changes
+        self.last_turn_change_time = 0
+        
+        # Speed tracking for each lap (from Node 2)
+        self.current_lap_speeds = []  # Store speeds during current lap
+        self.lap_speed_data = []  # Store speed statistics for each completed lap
+        self.speed_sample_interval = 0.5  # Sample speed every 0.5 seconds
+        self.last_speed_sample_time = 0
+        
         # ROS2 publisher for lap events
         self.lap_pub = self.node.create_publisher(Int32, '/planning/lap_count', 10)
         
+        # NEW: Additional ROS2 publishers for enhanced telemetry
+        self.lap_time_pub = self.node.create_publisher(Float64, '/planning/lap_time', 10)
+        self.best_lap_pub = self.node.create_publisher(Float64, '/planning/best_lap_time', 10)
+        self.lap_speed_pub = self.node.create_publisher(Vector3, '/planning/lap_speed_stats', 10)  # avg, max, min speeds
+        self.turn_stats_pub = self.node.create_publisher(Vector3, '/planning/turn_stats', 10)  # straight, gentle, sharp counts
+        self.target_progress_pub = self.node.create_publisher(Vector3, '/planning/target_progress', 10)  # completed, target, reached_flag
+        
+        print(f"🎯 Enhanced Lap Counter initialized:")
+        print(f"   Target: {target_laps if target_laps else 'UNLIMITED'} valid laps")
+        print(f"   Orange gate threshold: {self.orange_gate_passed_threshold}m")
+        print(f"   Orange cooldown: {self.cooldown_duration}s")
+        print(f"   📊 Enhanced telemetry publishing to ROS2 topics enabled")
+        
+    def record_speed(self, speed_ms):
+        """Record speed sample for current lap (from Node 2)"""
+        current_time = time.time()
+        
+        # Sample speed at regular intervals
+        if current_time - self.last_speed_sample_time >= self.speed_sample_interval:
+            speed_kmh = speed_ms * 3.6  # Convert m/s to km/h
+            self.current_lap_speeds.append(speed_kmh)
+            self.last_speed_sample_time = current_time
+            
+    def record_turn(self, turn_type):
+        """Record a turn for the current lap (from Node 2)"""
+        current_time = time.time()
+        
+        # Only record if turn type has changed and cooldown has passed
+        if (turn_type != self.last_turn_type and 
+            current_time - self.last_turn_change_time > self.turn_change_cooldown):
+            
+            if turn_type in self.current_lap_turns:
+                self.current_lap_turns[turn_type] += 1
+                self.last_turn_type = turn_type
+                self.last_turn_change_time = current_time
+                
+                # Publish turn statistics to ROS2
+                self._publish_turn_stats()
+                
+                print(f"DEBUG: Recorded {turn_type} turn. Current lap turns: {self.current_lap_turns}")
+        
+    def get_current_lap_time(self):
+        """Get the current lap time in progress (from Node 2)"""
+        return time.time() - self.lap_start_time
+    
+    def get_total_race_time(self):
+        """Get total race time since start (from Node 2)"""
+        return time.time() - self.race_start_time
+    
+    def format_time(self, time_seconds):
+        """Format time in MM:SS.mmm format (from Node 2)"""
+        if time_seconds == float('inf'):
+            return "--:--.---"
+        
+        minutes = int(time_seconds // 60)
+        seconds = time_seconds % 60
+        return f"{minutes:02d}:{seconds:06.3f}"
+    
+    def get_lap_time_stats(self):
+        """Get comprehensive lap time statistics (from Node 2)"""
+        current_lap = self.get_current_lap_time()
+        total_race = self.get_total_race_time()
+        
+        stats = {
+            'current_lap': current_lap,
+            'total_race': total_race,
+            'laps_completed': self.laps_completed,
+            'valid_laps_completed': len(self.lap_times),  # Only count valid laps
+            'best_lap': self.best_lap_time,
+            'last_lap': self.last_lap_time,
+            'lap_times': self.lap_times.copy(),
+            'average_lap': sum(self.lap_times) / len(self.lap_times) if self.lap_times else 0.0,
+            'lap_turn_data': self.lap_turn_data.copy(),
+            'current_lap_turns': self.current_lap_turns.copy(),
+            'lap_speed_data': self.lap_speed_data.copy(),
+            'current_lap_speeds': self.current_lap_speeds.copy(),
+            'target_laps': self.target_laps,
+            'target_reached': self.target_reached
+        }
+        
+        return stats
+    
+    def _publish_lap_time(self, lap_time):
+        """Publish lap time to ROS2 topic"""
+        try:
+            msg = Float64()
+            msg.data = lap_time
+            self.lap_time_pub.publish(msg)
+            self.node.get_logger().info(f"Published lap time: {self.format_time(lap_time)}")
+        except Exception as e:
+            print(f"Error publishing lap time: {e}")
+    
+    def _publish_best_lap_time(self):
+        """Publish best lap time to ROS2 topic"""
+        try:
+            msg = Float64()
+            msg.data = self.best_lap_time if self.best_lap_time != float('inf') else 0.0
+            self.best_lap_pub.publish(msg)
+            self.node.get_logger().info(f"Published best lap time: {self.format_time(self.best_lap_time)}")
+        except Exception as e:
+            print(f"Error publishing best lap time: {e}")
+    
+    def _publish_lap_speed_stats(self, speed_stats):
+        """Publish lap speed statistics to ROS2 topic"""
+        try:
+            msg = Vector3()
+            msg.x = speed_stats.get('avg_speed', 0.0)
+            msg.y = speed_stats.get('max_speed', 0.0)
+            msg.z = speed_stats.get('min_speed', 0.0)
+            self.lap_speed_pub.publish(msg)
+            self.node.get_logger().info(f"Published lap speed stats: avg={msg.x:.1f}, max={msg.y:.1f}, min={msg.z:.1f} km/h")
+        except Exception as e:
+            print(f"Error publishing lap speed stats: {e}")
+    
+    def _publish_turn_stats(self):
+        """Publish current turn statistics to ROS2 topic"""
+        try:
+            msg = Vector3()
+            msg.x = float(self.current_lap_turns['straight'])
+            msg.y = float(self.current_lap_turns['gentle'])
+            msg.z = float(self.current_lap_turns['sharp'])
+            self.turn_stats_pub.publish(msg)
+            self.node.get_logger().debug(f"Published turn stats: straight={msg.x}, gentle={msg.y}, sharp={msg.z}")
+        except Exception as e:
+            print(f"Error publishing turn stats: {e}")
+    
+    def _publish_target_progress(self):
+        """Publish target progress to ROS2 topic"""
+        try:
+            msg = Vector3()
+            msg.x = float(len(self.lap_times))  # Valid laps completed
+            msg.y = float(self.target_laps) if self.target_laps else 0.0
+            msg.z = 1.0 if self.target_reached else 0.0
+            self.target_progress_pub.publish(msg)
+            self.node.get_logger().info(f"Published target progress: {int(msg.x)}/{int(msg.y) if self.target_laps else 'unlimited'} laps")
+        except Exception as e:
+            print(f"Error publishing target progress: {e}")
+            
     def check_orange_gate_passage(self, orange_cones, vehicle_position):
         """Check if vehicle has passed between two orange cones"""
         current_time = time.time()
@@ -48,10 +214,7 @@ class LapCounter:
             if len(orange_cones) >= 1:
                 closest_orange = min(orange_cones, key=lambda c: c['depth'])
                 if closest_orange['depth'] < 3.0:  # Very close to single orange cone
-                    self.laps_completed += 1
-                    self.last_orange_gate_time = current_time
-                    self.publish_lap_completion()
-                    print(f"🏁 LAP {self.laps_completed} COMPLETED! Passed single orange cone!")
+                    self._complete_lap(current_time)
                     return True
             return False
         
@@ -66,13 +229,120 @@ class LapCounter:
         print(f"DEBUG: Gate center: ({gate_center_x:.2f}, {gate_center_y:.2f})")
         
         if distance_to_gate < self.orange_gate_passed_threshold:
-            self.laps_completed += 1
-            self.last_orange_gate_time = current_time
-            self.publish_lap_completion()
-            print(f"🏁 LAP {self.laps_completed} COMPLETED! Passed through orange gate!")
+            self._complete_lap(current_time)
             return True
         
         return False
+    
+    def _complete_lap(self, current_time):
+        """Complete a lap and update timing statistics (enhanced from Node 2)"""
+        # Calculate lap time
+        lap_time = current_time - self.lap_start_time
+        
+        # Get minimum lap time from ROS2 parameters (default 3.0 if not set)
+        try:
+            min_lap_time = self.node.get_parameter('lap_counter.min_lap_time').get_parameter_value().double_value
+        except:
+            min_lap_time = 3.0  # Default minimum lap time
+        
+        # Skip first "lap" if it's too short (race start)
+        if self.laps_completed == 0 and lap_time < 10.0:
+            print(f"🏁 RACE STARTED! Starting lap timing...")
+            print(f"   Minimum lap time for counting: {self.format_time(min_lap_time)}")
+            if self.target_laps:
+                print(f"🎯 Target: {self.target_laps} valid laps")
+        else:
+            # Check if lap time meets minimum threshold
+            if lap_time < min_lap_time:
+                print(f"⚠️  FALSE LAP DETECTED - IGNORED!")
+                print(f"   Lap time: {self.format_time(lap_time)} (under {self.format_time(min_lap_time)} minimum)")
+                print(f"   This was likely a false detection from orange cone positioning")
+                print(f"   Continuing current lap timing...")
+                
+                # Update cooldown but don't count the lap or restart timing
+                self.last_orange_gate_time = current_time
+                return  # Exit without counting this lap
+            
+            # Valid lap - record the lap time, turn data, and speed data
+            self.lap_times.append(lap_time)
+            self.last_lap_time = lap_time
+            valid_lap_number = len(self.lap_times)
+            
+            # Publish lap time to ROS2
+            self._publish_lap_time(lap_time)
+            
+            # Record turn data for this lap
+            lap_turn_summary = self.current_lap_turns.copy()
+            self.lap_turn_data.append(lap_turn_summary)
+            
+            # Record speed data for this lap
+            if self.current_lap_speeds:
+                speed_stats = {
+                    'max_speed': max(self.current_lap_speeds),
+                    'min_speed': min(self.current_lap_speeds),
+                    'avg_speed': np.mean(self.current_lap_speeds),
+                    'std_speed': np.std(self.current_lap_speeds),
+                    'speed_samples': len(self.current_lap_speeds)
+                }
+                self.lap_speed_data.append(speed_stats)
+                
+                # Publish speed stats to ROS2
+                self._publish_lap_speed_stats(speed_stats)
+                
+                print(f"   Speed Summary: Avg:{speed_stats['avg_speed']:.1f} km/h, Max:{speed_stats['max_speed']:.1f} km/h")
+            else:
+                # Fallback if no speed data collected
+                self.lap_speed_data.append({
+                    'max_speed': 0,
+                    'min_speed': 0, 
+                    'avg_speed': 0,
+                    'std_speed': 0,
+                    'speed_samples': 0
+                })
+            
+            # Update best lap time
+            if lap_time < self.best_lap_time:
+                self.best_lap_time = lap_time
+                self._publish_best_lap_time()  # Publish new best lap to ROS2
+                print(f"🏆 NEW BEST LAP TIME: {self.format_time(lap_time)}!")
+            
+            print(f"🏁 VALID LAP {valid_lap_number} COMPLETED!")
+            print(f"   Lap Time: {self.format_time(lap_time)}")
+            print(f"   Best Lap: {self.format_time(self.best_lap_time)}")
+            print(f"   Turn Summary: Straight:{lap_turn_summary['straight']}, Gentle:{lap_turn_summary['gentle']}, Sharp:{lap_turn_summary['sharp']}")
+            if len(self.lap_times) > 1:
+                avg_time = sum(self.lap_times) / len(self.lap_times)
+                print(f"   Average: {self.format_time(avg_time)}")
+            
+            # Check if target laps reached
+            if self.target_laps and valid_lap_number >= self.target_laps:
+                self.target_reached = True
+                print(f"🎯 TARGET REACHED! Completed {valid_lap_number}/{self.target_laps} valid laps")
+                print(f"🏁 Race will end after this lap!")
+            elif self.target_laps:
+                remaining_laps = self.target_laps - valid_lap_number
+                print(f"🎯 Progress: {valid_lap_number}/{self.target_laps} valid laps ({remaining_laps} remaining)")
+            
+            # Publish target progress to ROS2
+            self._publish_target_progress()
+            
+            # Reset counters for next lap
+            self.current_lap_turns = {
+                'straight': 0,
+                'gentle': 0,
+                'sharp': 0
+            }
+            self.current_lap_speeds = []  # Reset speed tracking
+            
+            # Only restart lap timing for valid laps
+            self.lap_start_time = current_time
+        
+        # Update counters and cooldown
+        self.laps_completed += 1
+        self.last_orange_gate_time = current_time
+        
+        # Publish lap completion event to ROS2 topic
+        self.publish_lap_completion()
     
     def publish_lap_completion(self):
         """Publish lap completion event to ROS2 topic"""
@@ -213,6 +483,10 @@ class PurePursuitController:
         
         # ROS2 Publishers for control commands
         self.setup_ros_publishers()
+        
+    def is_target_reached(self):
+        """Check if target laps have been reached"""
+        return self.lap_counter.target_reached
         
     def setup_ros_publishers(self):
         """Setup ROS2 publishers for control commands"""
@@ -1181,6 +1455,14 @@ class CarlaRacingSystemROS2(Node):
         self.declare_parameter('vehicle.max_steering_degrees', 30.0,
                               descriptor=ParameterDescriptor(description='Maximum steering angle in degrees'))
         
+        # Lap counter parameters
+        self.declare_parameter('lap_counter.min_lap_time', 3.0,
+                            descriptor=ParameterDescriptor(description='Minimum lap time for validation in seconds'))
+        self.declare_parameter('lap_counter.target_laps', 0,
+                            descriptor=ParameterDescriptor(description='Target number of laps (0 = unlimited)'))
+        self.declare_parameter('lap_counter.speed_sample_interval', 0.5,
+                            descriptor=ParameterDescriptor(description='Speed sampling interval in seconds'))
+        
         # Control parameters
         self.declare_parameter('control.max_speed', 8.0,
                               descriptor=ParameterDescriptor(description='Maximum vehicle speed in m/s'))
@@ -1254,13 +1536,6 @@ class CarlaRacingSystemROS2(Node):
                               descriptor=ParameterDescriptor(description='Amplitude for aggressive search pattern in degrees'))
         self.declare_parameter('recovery.wide_search_amplitude', 24.0,
                               descriptor=ParameterDescriptor(description='Amplitude for wide search pattern in degrees'))
-        
-        # Lap counter parameters
-        self.declare_parameter('lap_counter.cooldown_duration', 3.0,
-                              descriptor=ParameterDescriptor(description='Cooldown duration between lap counts in seconds'))
-        self.declare_parameter('lap_counter.orange_gate_threshold', 2.0,
-                              descriptor=ParameterDescriptor(description='Distance threshold for passing through orange gate in meters'))
-        
         # System parameters
         self.declare_parameter('system.control_loop_hz', 20.0,
                               descriptor=ParameterDescriptor(description='Control loop frequency in Hz'))
@@ -1664,7 +1939,7 @@ def main(args=None):
     rclpy.init(args=args)
     
     # Default YOLO model path
-    model_path = '/home/legion5/hydrakon_ws/src/planning_module/planning_module/best.pt'
+    model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
     
     print(f"Using YOLO model: {model_path}")
     
