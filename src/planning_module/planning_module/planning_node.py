@@ -418,18 +418,18 @@ class PurePursuitController:
         self.max_speed = 8.0  # m/s
         self.min_speed = 2.0  # m/s
         
-        # Control parameters - much more restrictive
-        self.safety_offset = 0.5  # meters from cones
-        self.max_depth = 8.0   # maximum cone detection range - reduced significantly
-        self.min_depth = 1.5   # minimum cone detection range - increased
-        self.max_lateral_distance = 4.0  # maximum lateral distance from vehicle center
+        # ENHANCED: Control parameters from Node 1 - using Node 1's strict immediate focus approach
+        self.safety_offset = 1.75  # meters from cones - standard track width estimation
+        self.max_depth = 8.0   # maximum cone detection range - reduced for immediate focus
+        self.min_depth = 1.5   # minimum cone detection range
+        self.max_lateral_distance = 3.0  # maximum lateral distance - reduced for immediate track
         
-        # NEW: Turn radius and path widening parameters
+        # ENHANCED: Turn radius and path parameters from Node 1 - immediate track section focus
         self.min_turn_radius = 3.5  # Minimum safe turning radius (meters)
-        self.path_widening_factor = 1.8  # How much to widen the path in turns
+        self.lookahead_for_turns = 8.0  # Look ahead distance for turn detection - increased
         self.sharp_turn_threshold = 25.0  # Angle threshold for sharp turns (degrees)
         self.u_turn_threshold = 60.0  # Angle threshold for U-turns (degrees)
-        self.turn_detection_distance = 6.0  # Distance to look ahead for turn detection
+        self.turn_detection_distance = 8.0  # Distance to look ahead for turn detection - increased
         
         # Track following parameters
         self.track_width_min = 3.0  # Minimum track width (meters)
@@ -464,11 +464,11 @@ class PurePursuitController:
         self.last_steering = 0.0
         self.steering_history = deque(maxlen=5)
         
-        # NEW: Turn state tracking
+        # ENHANCED: Turn state tracking from Node 1 - limited cone sequence for immediate focus
         self.current_turn_type = "straight"  # "straight", "gentle", "sharp", "u_turn"
         self.turn_direction = "none"  # "left", "right", "none"
         self.path_offset = 0.0  # Current path offset for wider turns
-        self.gate_sequence = deque(maxlen=5)  # Track recent gates for turn prediction
+        self.cone_sequence = deque(maxlen=3)  # Track recent cones for turn prediction - limited to 3
         
         # Backup navigation when no gates found
         self.lost_track_counter = 0
@@ -477,6 +477,11 @@ class PurePursuitController:
         # Distance tracking for basic stats
         self.distance_traveled = 0.0
         self.last_position = None
+        
+        # ENHANCED: Cone following parameters from Node 1 - optimized for immediate midpoint following
+        self.cone_follow_lookahead = 4.0  # Reduced lookahead for immediate focus
+        self.early_turn_factor = 1.0  # Reduced factor for more precise control
+        self.smoothing_factor = 0.3  # Reduced smoothing for more responsiveness
         
         # Initialize lap counter
         self.lap_counter = LapCounter(node)
@@ -643,157 +648,75 @@ class PurePursuitController:
         except Exception as e:
             print(f"Error publishing emergency stop: {e}")
     
-    def detect_turn_type(self, current_gate, blue_cones, yellow_cones):
-        """Detect the type of turn and calculate appropriate path widening"""
-        if not current_gate:
+    def detect_turn_type_from_cones(self, blue_cones, yellow_cones):
+        """ENHANCED: Detect turn type and direction from cone patterns - Node 1's limited immediate focus approach"""
+        # Use Node 1's approach: limited to first 3 cones of each side for immediate focus
+        limited_blue = blue_cones[:3]
+        limited_yellow = yellow_cones[:3]
+        all_cones = limited_blue + limited_yellow
+        
+        if len(all_cones) < 2:
             return "straight", "none", 0.0
         
         try:
-            # Add current gate to sequence
-            self.gate_sequence.append({
-                'midpoint_x': current_gate['midpoint_x'],
-                'midpoint_y': current_gate['midpoint_y'],
-                'width': current_gate['width']
-            })
+            # Sort cones by depth (closest first)
+            all_cones.sort(key=lambda c: c['depth'])
             
-            if len(self.gate_sequence) < 2:
+            # Add recent cones to sequence for pattern analysis - limited to 3 pairs
+            for cone in all_cones[:3]:  # Use only closest 3 cones
+                self.cone_sequence.append({
+                    'x': cone['x'],
+                    'y': cone['y'],
+                    'depth': cone['depth'],
+                    'side': 'left' if cone in limited_blue else 'right'
+                })
+            
+            if len(self.cone_sequence) < 2:
                 return "straight", "none", 0.0
             
-            # Calculate turn angle based on gate sequence
-            current_pos = self.gate_sequence[-1]
-            previous_pos = self.gate_sequence[-2]
+            # Analyze cone sequence for turn patterns - use only last 3 cones
+            recent_cones = list(self.cone_sequence)[-3:]  # Use only last 3 cones
             
-            # Calculate direction change
-            angle_change = np.degrees(np.arctan2(current_pos['midpoint_x'], current_pos['midpoint_y']) - 
-                                    np.arctan2(previous_pos['midpoint_x'], previous_pos['midpoint_y']))
+            # Calculate lateral movement trend from first 3 cone pairs
+            left_cones = [c for c in recent_cones if c['side'] == 'left']
+            right_cones = [c for c in recent_cones if c['side'] == 'right']
             
-            # Normalize angle to [-180, 180]
-            while angle_change > 180:
-                angle_change -= 360
-            while angle_change < -180:
-                angle_change += 360
+            left_trend = 0.0
+            right_trend = 0.0
             
-            abs_angle = abs(angle_change)
+            if len(left_cones) >= 2:
+                left_positions = [c['x'] for c in left_cones]
+                left_trend = (left_positions[-1] - left_positions[0]) / len(left_positions)
             
-            # Look ahead for upcoming turns by analyzing cone distribution
-            upcoming_turn_severity = self.analyze_upcoming_turn(blue_cones, yellow_cones)
+            if len(right_cones) >= 2:
+                right_positions = [c['x'] for c in right_cones]
+                right_trend = (right_positions[-1] - right_positions[0]) / len(right_positions)
             
-            # Determine turn type and direction
-            if abs_angle < 10 and upcoming_turn_severity < 20:
+            # Determine turn characteristics
+            avg_trend = (left_trend + right_trend) / 2 if left_cones and right_cones else (left_trend or right_trend)
+            turn_magnitude = abs(avg_trend)
+            
+            # Classify turn type with focus on first 3 pairs
+            if turn_magnitude < 0.3:
                 turn_type = "straight"
                 direction = "none"
                 path_offset = 0.0
-            elif abs_angle < self.sharp_turn_threshold and upcoming_turn_severity < 40:
+            elif turn_magnitude < 0.8:
                 turn_type = "gentle"
-                direction = "left" if angle_change > 0 else "right"
-                path_offset = 0.3 * self.path_widening_factor
-            elif abs_angle < self.u_turn_threshold and upcoming_turn_severity < 70:
-                turn_type = "sharp"
-                direction = "left" if angle_change > 0 else "right"
-                path_offset = 0.6 * self.path_widening_factor
+                direction = "left" if avg_trend > 0 else "right"
+                path_offset = 0.4
             else:
-                turn_type = "u_turn"
-                direction = "left" if angle_change > 0 else "right"
-                path_offset = 1.0 * self.path_widening_factor
+                turn_type = "sharp"
+                direction = "left" if avg_trend > 0 else "right"
+                path_offset = 0.8
             
-            print(f"DEBUG: Turn analysis - Type: {turn_type}, Direction: {direction}, Angle change: {angle_change:.1f}°, Upcoming severity: {upcoming_turn_severity:.1f}°")
+            print(f"DEBUG: Node 1 cone pattern analysis (first 3 pairs) - Type: {turn_type}, Direction: {direction}, Trend: {avg_trend:.3f}")
             
             return turn_type, direction, path_offset
             
         except Exception as e:
-            print(f"ERROR in turn detection: {e}")
+            print(f"ERROR in cone turn detection: {e}")
             return "straight", "none", 0.0
-    
-    def analyze_upcoming_turn(self, blue_cones, yellow_cones):
-        """Analyze cone distribution to predict upcoming turn severity"""
-        try:
-            if not blue_cones or not yellow_cones:
-                return 0.0
-            
-            # Look at cones within turn detection distance
-            nearby_blue = [c for c in blue_cones if c['depth'] <= self.turn_detection_distance]
-            nearby_yellow = [c for c in yellow_cones if c['depth'] <= self.turn_detection_distance]
-            
-            if len(nearby_blue) < 2 or len(nearby_yellow) < 2:
-                return 0.0
-            
-            # Calculate the curvature based on lateral position changes
-            blue_lateral_change = 0.0
-            yellow_lateral_change = 0.0
-            
-            for i in range(1, min(len(nearby_blue), 3)):
-                blue_lateral_change += abs(nearby_blue[i]['x'] - nearby_blue[i-1]['x'])
-            
-            for i in range(1, min(len(nearby_yellow), 3)):
-                yellow_lateral_change += abs(nearby_yellow[i]['x'] - nearby_yellow[i-1]['x'])
-            
-            # Convert lateral changes to approximate turn angle
-            max_lateral_change = max(blue_lateral_change, yellow_lateral_change)
-            turn_severity = np.degrees(np.arctan2(max_lateral_change, self.turn_detection_distance))
-            
-            return min(turn_severity, 90.0)  # Cap at 90 degrees
-            
-        except Exception as e:
-            print(f"ERROR in upcoming turn analysis: {e}")
-            return 0.0
-    
-    def calculate_turn_radius(self, steering_angle):
-        """Calculate the turning radius based on steering angle and wheelbase"""
-        if abs(steering_angle) < 0.01:
-            return float('inf')  # Straight line
-        
-        # Bicycle model turning radius
-        turn_radius = self.wheelbase / np.tan(abs(steering_angle))
-        return max(turn_radius, self.min_turn_radius)
-    
-    def adjust_target_for_turn(self, target_x, target_y, turn_type, turn_direction, path_offset):
-        """Adjust the target point to create a wider path around turns"""
-        try:
-            if turn_type == "straight":
-                return target_x, target_y
-            
-            # Calculate the vector from vehicle to target
-            target_distance = np.sqrt(target_x**2 + target_y**2)
-            
-            if target_distance < 0.1:
-                return target_x, target_y
-            
-            # Normalize the target vector
-            target_unit_x = target_x / target_distance
-            target_unit_y = target_y / target_distance
-            
-            # Create a perpendicular vector for path offset
-            perp_x = -target_unit_y  # Perpendicular vector
-            perp_y = target_unit_x
-            
-            # Determine offset direction based on turn
-            if turn_direction == "left":
-                # For left turns, offset to the right (away from inner cones)
-                offset_multiplier = -path_offset
-            elif turn_direction == "right":
-                # For right turns, offset to the left (away from inner cones)
-                offset_multiplier = path_offset
-            else:
-                offset_multiplier = 0.0
-            
-            # Apply the offset
-            adjusted_x = target_x + perp_x * offset_multiplier
-            adjusted_y = target_y + perp_y * offset_multiplier
-            
-            # Additional forward offset for sharp turns and U-turns
-            if turn_type in ["sharp", "u_turn"]:
-                forward_offset = 0.5 if turn_type == "sharp" else 1.0
-                adjusted_y += forward_offset
-            
-            print(f"DEBUG: Path adjustment - Original: ({target_x:.2f}, {target_y:.2f}), "
-                  f"Adjusted: ({adjusted_x:.2f}, {adjusted_y:.2f}), "
-                  f"Offset: {offset_multiplier:.2f}, Turn: {turn_type}-{turn_direction}")
-            
-            return adjusted_x, adjusted_y
-            
-        except Exception as e:
-            print(f"ERROR in target adjustment: {e}")
-            return target_x, target_y
     
     def calculate_adaptive_speed(self, turn_type, steering_angle, current_depth):
         """Calculate speed based on turn type and conditions"""
@@ -842,7 +765,7 @@ class PurePursuitController:
         return world_x, world_y
     
     def process_cone_detections(self, cone_detections):
-        """Process cone detections - FIXED FOR ZED 2I FORMAT"""
+        """ENHANCED: Process cone detections with Node 1's strict spatial filtering focused on immediate track section"""
         if not cone_detections:
             return [], [], []
             
@@ -882,12 +805,12 @@ class PurePursuitController:
                     print(f"DEBUG: Error converting detection values: box={box}, cls={cls}, depth={depth}")
                     continue
                 
-                # Filter by depth range - more lenient for orange cones
+                # ENHANCED: STRICT depth filtering for immediate track focus (from Node 1)
                 if cls == 2:  # Orange cone - allow farther detection
                     if depth < 1.0 or depth > 15.0:
                         continue
-                else:  # Blue/Yellow cones - strict filtering
-                    if depth < self.min_depth or depth > self.max_depth:
+                else:  # Blue/Yellow cones - very strict for immediate section only
+                    if depth < 1.5 or depth > 8.0:  # Reduced from 12.0 to 8.0
                         continue
                     
                 center_x = (x1 + x2) / 2
@@ -896,29 +819,28 @@ class PurePursuitController:
                 # Convert to world coordinates using ZED 2i FOV
                 world_x, world_y = self.image_to_world_coords(center_x, center_y, depth)
                 
-                # CRITICAL: Filter by lateral distance - more lenient for orange cones
+                # ENHANCED: STRICT lateral distance filtering for immediate track section (from Node 1)
                 if cls == 2:  # Orange cone - allow wider lateral range
                     if abs(world_x) > 8.0:  # Wider range for orange cones
                         continue
-                else:  # Blue/Yellow cones - strict filtering
-                    if abs(world_x) > self.max_lateral_distance:
+                else:  # Blue/Yellow cones - very strict for immediate track
+                    if abs(world_x) > 3.0:  # Reduced from 4.0 to 3.0
                         continue
                 
-                # CRITICAL: Filter by forward focus angle - more lenient for orange cones
+                # ENHANCED: STRICT forward focus angle for immediate track section (from Node 1)
                 angle_to_cone = np.degrees(abs(np.arctan2(world_x, world_y)))
                 if cls == 2:  # Orange cone - allow wider angle
                     if angle_to_cone > 60.0:  # Wider angle for orange cones
                         continue
-                else:  # Blue/Yellow cones - strict filtering
-                    if angle_to_cone > self.forward_focus_angle:
+                else:  # Blue/Yellow cones - very strict for immediate track
+                    if angle_to_cone > 30.0:  # Reduced from 45.0 to 30.0
                         continue
                 
-                # Only consider cones that are reasonably positioned for track boundaries
-                # Blue cones should be on the left (negative x), yellow on the right (positive x)
-                # Orange cones can be anywhere (lap markers)
-                if cls == 1 and world_x > 1.0:  # Blue cone too far right
+                # ENHANCED: Additional filtering from Node 1 - ensure cones are clearly part of immediate track
+                # Ensure blue cones are on the left and yellow on the right for immediate section
+                if cls == 1 and world_x > 0.5:  # Blue cone too far right for immediate track
                     continue
-                if cls == 0 and world_x < -1.0:  # Yellow cone too far left
+                if cls == 0 and world_x < -0.5:  # Yellow cone too far left for immediate track
                     continue
                 
                 cone_data = {
@@ -959,147 +881,115 @@ class PurePursuitController:
         self.last_orange_cone_count = len(orange_cones)
         
         # Debug filtered cones
-        print(f"DEBUG: After spatial filtering - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
+        print(f"DEBUG: After STRICT Node 1 filtering - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
         
         return blue_cones, yellow_cones, orange_cones
     
-    def is_valid_track_segment(self, blue, yellow):
-        """Strict validation for immediate track segments"""
+    def calculate_smooth_cone_target(self, blue_cones, yellow_cones):
+        """ENHANCED: Calculate precise midpoint target for immediate track section with Node 1's approach"""
+        if not blue_cones and not yellow_cones:
+            return None
+        
         try:
-            # Ensure blue is on left, yellow on right
-            if blue['x'] >= yellow['x']:
-                return False
+            # ENHANCED: Limit to first 2 cones of each side for immediate track focus (from Node 1)
+            limited_blue = blue_cones[:2]
+            limited_yellow = yellow_cones[:2]
             
-            # Depth similarity - much stricter
-            depth_diff = abs(blue['depth'] - yellow['depth'])
-            if depth_diff > self.max_depth_diff:
-                return False
+            target_x = 0.0
+            target_y = 4.0  # Default forward target
             
-            # Track width validation - strict Formula Student standards
-            width = abs(blue['x'] - yellow['x'])
-            if width < self.track_width_min or width > self.track_width_max:
-                return False
+            print(f"DEBUG: Limited cones - Blue: {len(limited_blue)}, Yellow: {len(limited_yellow)}")
             
-            # Both cones must be reasonably close (immediate track section)
-            avg_depth = (blue['depth'] + yellow['depth']) / 2
-            if avg_depth > 6.0:  # Very close focus
-                return False
-            
-            # Both cones should be roughly aligned laterally (not offset significantly)
-            lateral_center = (blue['x'] + yellow['x']) / 2
-            if abs(lateral_center) > 1.0:  # Gate center should be roughly in front of vehicle
-                return False
+            # PRIORITY 1: If we have both blue and yellow cones, find the best immediate pair
+            if limited_blue and limited_yellow:
+                best_pair = None
+                min_depth_diff = float('inf')
                 
-            return True
+                # Find the best matching pair with similar depths
+                for blue_cone in limited_blue:
+                    for yellow_cone in limited_yellow:
+                        depth_diff = abs(blue_cone['depth'] - yellow_cone['depth'])
+                        avg_depth = (blue_cone['depth'] + yellow_cone['depth']) / 2
+                        
+                        # Only consider pairs that are close and reasonable
+                        if depth_diff < 2.0 and avg_depth < 6.0:  # Immediate track section
+                            if depth_diff < min_depth_diff:
+                                min_depth_diff = depth_diff
+                                best_pair = (blue_cone, yellow_cone)
+                
+                if best_pair:
+                    blue_cone, yellow_cone = best_pair
+                    # Calculate precise midpoint
+                    target_x = (blue_cone['x'] + yellow_cone['x']) / 2
+                    target_y = (blue_cone['y'] + yellow_cone['y']) / 2
+                    
+                    track_width = abs(blue_cone['x'] - yellow_cone['x'])
+                    print(f"DEBUG: MIDPOINT from immediate pair - Blue: ({blue_cone['x']:.2f}, {blue_cone['y']:.2f}), Yellow: ({yellow_cone['x']:.2f}, {yellow_cone['y']:.2f})")
+                    print(f"DEBUG: MIDPOINT target: ({target_x:.2f}, {target_y:.2f}), Width: {track_width:.2f}m")
+                    
+                    # ENHANCED: Node 1's centerline forcing - if midpoint is too far off center, adjust
+                    if abs(target_x) > 1.5:  # If midpoint too far off center, adjust
+                        target_x = np.clip(target_x, -1.5, 1.5)
+                        print(f"DEBUG: Adjusted midpoint to stay centered: ({target_x:.2f}, {target_y:.2f})")
+                        
+                else:
+                    # No good pairs found, use average positions with centerline bias
+                    blue_avg_x = np.mean([c['x'] for c in limited_blue])
+                    yellow_avg_x = np.mean([c['x'] for c in limited_yellow])
+                    target_x = (blue_avg_x + yellow_avg_x) / 2
+                    target_y = np.mean([c['y'] for c in limited_blue + limited_yellow])
+                    print(f"DEBUG: MIDPOINT from averages: ({target_x:.2f}, {target_y:.2f})")
+            
+            # PRIORITY 2: Only one side available - follow with centerline offset
+            elif limited_blue:
+                # Only blue cones available - aim for centerline with right offset
+                closest_blue = limited_blue[0]
+                # Estimate track width and aim for center
+                estimated_track_width = 3.5  # Standard Formula Student track width
+                target_x = closest_blue['x'] + (estimated_track_width / 2)
+                target_y = closest_blue['y']
+                print(f"DEBUG: Following blue cones with centerline estimation: ({target_x:.2f}, {target_y:.2f})")
+                
+            elif limited_yellow:
+                # Only yellow cones available - aim for centerline with left offset
+                closest_yellow = limited_yellow[0]
+                # Estimate track width and aim for center
+                estimated_track_width = 3.5  # Standard Formula Student track width
+                target_x = closest_yellow['x'] - (estimated_track_width / 2)
+                target_y = closest_yellow['y']
+                print(f"DEBUG: Following yellow cones with centerline estimation: ({target_x:.2f}, {target_y:.2f})")
+            
+            # ENHANCED: Apply minimal smoothing to avoid oscillation (from Node 1)
+            if hasattr(self, 'last_target_x') and hasattr(self, 'last_target_y'):
+                # Use lighter smoothing to be more responsive
+                smooth_factor = 0.3  # Reduced from 0.7 for more responsiveness
+                target_x = smooth_factor * target_x + (1 - smooth_factor) * self.last_target_x
+                target_y = smooth_factor * target_y + (1 - smooth_factor) * self.last_target_y
+                print(f"DEBUG: Lightly smoothed target: ({target_x:.2f}, {target_y:.2f})")
+            
+            # Store for next iteration
+            self.last_target_x = target_x
+            self.last_target_y = target_y
+            
+            # Ensure target is within reasonable bounds
+            target_y = max(target_y, 2.0)  # Minimum lookahead
+            target_y = min(target_y, 6.0)  # Maximum lookahead for immediate focus
+            target_x = np.clip(target_x, -2.0, 2.0)  # Reasonable lateral bounds
+            
+            return {
+                'midpoint_x': target_x,
+                'midpoint_y': target_y,
+                'avg_depth': target_y,
+                'width': abs(target_x) * 2,
+                'type': 'immediate_midpoint'
+            }
             
         except Exception as e:
-            print(f"ERROR in track segment validation: {e}")
-            return False
-    
-    def find_best_track_segment(self, blue_cones, yellow_cones):
-        """Find the best immediate track segment with strict proximity focus"""
-        if not blue_cones or not yellow_cones:
-            print(f"DEBUG: Cannot form track segment - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}")
+            print(f"ERROR in immediate midpoint calculation: {e}")
             return None
-            
-        print(f"DEBUG: Finding immediate track segment from {len(blue_cones)} blue and {len(yellow_cones)} yellow cones")
-        
-        # Only consider the closest 3 cones of each color to focus on immediate track
-        blue_candidates = blue_cones[:3]
-        yellow_candidates = yellow_cones[:3]
-        
-        valid_segments = []
-        
-        try:
-            for blue in blue_candidates:
-                for yellow in yellow_candidates:
-                    
-                    if not self.is_valid_track_segment(blue, yellow):
-                        continue
-                    
-                    # Create track segment
-                    segment = {
-                        'blue': blue,
-                        'yellow': yellow,
-                        'midpoint_x': (blue['x'] + yellow['x']) / 2,
-                        'midpoint_y': (blue['y'] + yellow['y']) / 2,
-                        'width': abs(blue['x'] - yellow['x']),
-                        'avg_depth': (blue['depth'] + yellow['depth']) / 2,
-                        'confidence': (blue.get('confidence', 1.0) + yellow.get('confidence', 1.0)) / 2
-                    }
-                    
-                    # Additional validation: segment should be roughly centered in front of vehicle
-                    if abs(segment['midpoint_x']) < 2.0:  # Segment center within 2m of vehicle centerline
-                        valid_segments.append(segment)
-            
-            if not valid_segments:
-                print("DEBUG: No valid immediate track segments found")
-                return None
-            
-            # Sort by distance (closest first), heavily prioritize centerline alignment
-            def segment_score(s):
-                distance_score = s['avg_depth']
-                centerline_score = abs(s['midpoint_x']) * 3.0  # Heavy penalty for off-center segments
-                return distance_score + centerline_score
-            
-            valid_segments.sort(key=segment_score)
-            best_segment = valid_segments[0]
-            
-            print(f"DEBUG: Found immediate track segment:")
-            print(f"  Blue cone (LEFT):  x={best_segment['blue']['x']:6.2f}, y={best_segment['blue']['y']:6.2f}")
-            print(f"  Yellow cone (RIGHT): x={best_segment['yellow']['x']:6.2f}, y={best_segment['yellow']['y']:6.2f}")
-            print(f"  Segment midpoint: x={best_segment['midpoint_x']:6.2f}, y={best_segment['midpoint_y']:6.2f}")
-            print(f"  Segment width: {best_segment['width']:.2f}m, Average depth: {best_segment['avg_depth']:.2f}m")
-            print(f"  Centerline offset: {abs(best_segment['midpoint_x']):.2f}m")
-            
-            return best_segment
-            
-        except Exception as e:
-            print(f"ERROR in track segment finding: {e}")
-            return None
-    
-    def follow_cone_line(self, blue_cones, yellow_cones):
-        """Fallback: follow immediate cones when no track segments can be formed"""
-        # Only consider the closest cones that are directly ahead
-        immediate_cones = []
-        
-        for cone in blue_cones[:2] + yellow_cones[:2]:
-            if cone['depth'] < 5.0 and abs(cone['x']) < 3.0:  # Very close and centered
-                immediate_cones.append(cone)
-        
-        if not immediate_cones:
-            return None
-            
-        # Sort by distance
-        immediate_cones.sort(key=lambda c: c['depth'])
-        closest_cone = immediate_cones[0]
-        
-        # Create a very conservative target point
-        if closest_cone in blue_cones:
-            # Blue cone on left, aim slightly right but stay close
-            target_x = closest_cone['x'] + 1.5
-        else:
-            # Yellow cone on right, aim slightly left but stay close
-            target_x = closest_cone['x'] - 1.5
-            
-        target_y = closest_cone['y']
-        
-        # Don't follow cone line if it's too far from center
-        if abs(target_x) > 3.0:
-            return None
-        
-        print(f"DEBUG: Following immediate cone line - target ({target_x:.2f}, {target_y:.2f})")
-        
-        return {
-            'midpoint_x': target_x,
-            'midpoint_y': target_y,
-            'avg_depth': target_y,
-            'width': 3.0,  # Conservative assumed width
-            'type': 'cone_line'
-        }
     
     def calculate_pure_pursuit_steering(self, target_x, target_y):
-        """Calculate steering angle using pure pursuit algorithm with enhanced cone visibility preservation"""
+        """ENHANCED: Calculate steering angle using pure pursuit algorithm with Node 1's immediate response approach"""
         try:
             print(f"DEBUG: Pure pursuit calculation for target ({target_x:.2f}, {target_y:.2f})")
             
@@ -1111,59 +1001,40 @@ class PurePursuitController:
             lookahead_dist = np.sqrt(target_x**2 + target_y**2)
             print(f"DEBUG: Lookahead distance: {lookahead_dist:.2f}m")
             
-            # NEW: Calculate steering aggressiveness based on cone visibility risk
+            # ENHANCED: Adaptive lookahead based on turn type from Node 1
             lateral_offset = abs(target_x)
-            visibility_risk_factor = 1.0
             
-            # Use parameters instead of hardcoded values
-            high_risk_threshold = getattr(self, 'high_risk_threshold', 2.5)
-            moderate_risk_threshold = getattr(self, 'moderate_risk_threshold', 1.8)
-            high_risk_factor = getattr(self, 'high_risk_factor', 1.4)
-            moderate_risk_factor = getattr(self, 'moderate_risk_factor', 1.2)
-            
-            # If target is getting close to our field of view limits, increase steering aggressiveness
-            if lateral_offset > high_risk_threshold:  # Getting close to losing sight
-                visibility_risk_factor = high_risk_factor
-                print(f"DEBUG: High visibility risk - increasing steering aggressiveness by {(high_risk_factor-1)*100:.0f}%")
-            elif lateral_offset > moderate_risk_threshold:  # Moderate risk
-                visibility_risk_factor = moderate_risk_factor
-                print(f"DEBUG: Moderate visibility risk - increasing steering aggressiveness by {(moderate_risk_factor-1)*100:.0f}%")
-            
-            # NEW: Adaptive lookahead with steering aggressiveness consideration
-            # For sharp turns, reduce lookahead to make steering more responsive
-            base_adaptive_lookahead = max(self.lookahead_distance, min(lookahead_dist, 6.0))
-            
-            # If we detect we're in a turn or approaching one, reduce lookahead for quicker response
-            if self.current_turn_type in ["sharp", "u_turn"]:
-                adaptive_lookahead = base_adaptive_lookahead * 0.7  # 30% reduction for sharp turns
-                print(f"DEBUG: Sharp/U-turn detected - reducing lookahead for quicker response")
+            # For cone following, use more responsive steering
+            if self.current_turn_type == "sharp":
+                adaptive_lookahead = lookahead_dist * 0.6  # More responsive for sharp turns
+                print(f"DEBUG: Sharp turn - using responsive lookahead")
             elif self.current_turn_type == "gentle":
-                adaptive_lookahead = base_adaptive_lookahead * 0.85  # 15% reduction for gentle turns
-                print(f"DEBUG: Gentle turn detected - slightly reducing lookahead")
+                adaptive_lookahead = lookahead_dist * 0.8  # Slightly more responsive
+                print(f"DEBUG: Gentle turn - using moderate lookahead")
             else:
-                adaptive_lookahead = base_adaptive_lookahead
+                adaptive_lookahead = lookahead_dist  # Normal lookahead for straight
             
-            # Apply visibility risk factor to lookahead (shorter lookahead = more aggressive steering)
-            adaptive_lookahead = adaptive_lookahead / visibility_risk_factor
+            # Ensure minimum and maximum lookahead
+            adaptive_lookahead = max(adaptive_lookahead, 2.0)
+            adaptive_lookahead = min(adaptive_lookahead, 8.0)
             
-            print(f"DEBUG: Adjusted lookahead: {adaptive_lookahead:.2f}m (visibility factor: {visibility_risk_factor:.2f})")
+            print(f"DEBUG: Adaptive lookahead: {adaptive_lookahead:.2f}m")
             
-            # Pure pursuit steering calculation with enhanced responsiveness
-            base_steering_angle = np.arctan2(2.0 * self.wheelbase * np.sin(alpha), adaptive_lookahead)
+            # Pure pursuit steering calculation
+            steering_angle = np.arctan2(2.0 * self.wheelbase * np.sin(alpha), adaptive_lookahead)
             
-            # NEW: Apply additional steering enhancement for cone visibility preservation
-            # If the lateral offset is significant, add extra steering bias
-            if lateral_offset > 1.5:
-                # Calculate additional steering needed to keep cones in sight
-                visibility_steering_boost = np.arctan2(lateral_offset - 1.5, lookahead_dist) * 0.6
-                if target_x > 0:  # Target to the right
-                    base_steering_angle += visibility_steering_boost
-                else:  # Target to the left
-                    base_steering_angle -= visibility_steering_boost
+            # ENHANCED: Apply early steering enhancement for turns from Node 1
+            if lateral_offset > 1.0:
+                # Calculate additional steering for early turn initiation
+                early_steering_factor = min(lateral_offset / 2.0, 1.0)  # Scale factor based on lateral offset
+                early_steering_boost = np.arctan2(lateral_offset * early_steering_factor, lookahead_dist) * 0.4
                 
-                print(f"DEBUG: Applied visibility steering boost: {np.degrees(visibility_steering_boost):.1f}°")
-            
-            steering_angle = base_steering_angle
+                if target_x > 0:  # Target to the right
+                    steering_angle += early_steering_boost
+                else:  # Target to the left
+                    steering_angle -= early_steering_boost
+                
+                print(f"DEBUG: Applied early steering boost: {np.degrees(early_steering_boost):.1f}°")
             
             # Calculate the required turn radius and check if it's feasible
             required_turn_radius = self.calculate_turn_radius(steering_angle)
@@ -1189,17 +1060,6 @@ class PurePursuitController:
             max_steering_degrees = 30.0
             steering_degrees = np.clip(steering_degrees, -max_steering_degrees, max_steering_degrees)
             
-            # NEW: Apply final visibility preservation enhancement
-            # If we're at risk of losing cones and steering is not aggressive enough, boost it
-            if lateral_offset > 2.0 and abs(steering_degrees) < 12.0:  # 12 degrees = 0.4 * 30
-                steering_boost = min(6.0, (lateral_offset - 2.0) * 9.0)  # Up to 6 degrees boost
-                if steering_degrees > 0:
-                    steering_degrees = min(30.0, steering_degrees + steering_boost)
-                else:
-                    steering_degrees = max(-30.0, steering_degrees - steering_boost)
-                
-                print(f"DEBUG: Applied final steering boost for cone visibility: {steering_boost:.1f}°")
-            
             print(f"DEBUG: Final steering command: {steering_degrees:.3f}°")
             direction = 'LEFT' if steering_degrees > 0 else 'RIGHT' if steering_degrees < 0 else 'STRAIGHT'
             print(f"DEBUG: Steering direction: {direction}")
@@ -1210,26 +1070,35 @@ class PurePursuitController:
             print(f"ERROR in pure pursuit calculation: {e}")
             return 0.0
     
+    def calculate_turn_radius(self, steering_angle):
+        """Calculate the turning radius based on steering angle and wheelbase"""
+        if abs(steering_angle) < 0.01:
+            return float('inf')  # Straight line
+        
+        # Bicycle model turning radius
+        turn_radius = self.wheelbase / np.tan(abs(steering_angle))
+        return max(turn_radius, self.min_turn_radius)
+    
     def smooth_steering(self, raw_steering):
-        """Apply steering smoothing with enhanced responsiveness for cone visibility"""
+        """ENHANCED: Apply steering smoothing with Node 1's turn-type based approach"""
         try:
             self.steering_history.append(raw_steering)
             
-            # NEW: Adaptive smoothing based on visibility risk
+            # ENHANCED: Node 1's adaptive smoothing based on turn requirements and lateral offset
             lateral_offset = abs(getattr(self, 'current_target_x', 0.0))
             
             if len(self.steering_history) >= 3:
-                # If we're at high risk of losing cones, use less smoothing (more responsive)
-                if lateral_offset > 2.5 or self.current_turn_type in ["sharp", "u_turn"]:
-                    # More aggressive weighting for recent steering inputs
-                    weights = np.array([0.7, 0.2, 0.1])  # Heavy emphasis on current steering
-                    print(f"DEBUG: High visibility risk - using aggressive steering smoothing")
-                elif lateral_offset > 1.8 or self.current_turn_type == "gentle":
-                    # Moderate smoothing
+                # For cone following, use balanced smoothing that responds to turns
+                if self.current_turn_type == "sharp":
+                    # More responsive for sharp turns
                     weights = np.array([0.6, 0.25, 0.15])
-                    print(f"DEBUG: Moderate visibility risk - using moderate steering smoothing")
+                    print(f"DEBUG: Sharp turn - using responsive steering smoothing")
+                elif lateral_offset > 2.0:
+                    # Moderate smoothing for significant lateral movement
+                    weights = np.array([0.55, 0.3, 0.15])
+                    print(f"DEBUG: High lateral offset - using moderate smoothing")
                 else:
-                    # Normal smoothing for straight sections
+                    # Balanced smoothing for normal following
                     weights = np.array([0.5, 0.3, 0.2])
                 
                 recent_steering = np.array(list(self.steering_history)[-3:])
@@ -1237,20 +1106,13 @@ class PurePursuitController:
             else:
                 smoothed = raw_steering
             
-            # NEW: Adaptive rate limiting based on cone visibility risk
-            if lateral_offset > 2.5:
-                # High risk - allow more aggressive steering changes
-                max_change = 7.5  # degrees
-                print(f"DEBUG: High visibility risk - allowing max steering change: {max_change}°")
-            elif lateral_offset > 1.8:
-                # Moderate risk - slightly more aggressive
-                max_change = 6.0  # degrees
-            elif self.current_turn_type in ["sharp", "u_turn"]:
-                # Sharp turns - more responsive
-                max_change = 5.5  # degrees
+            # ENHANCED: Node 1's adaptive rate limiting for cone following
+            if self.current_turn_type == "sharp":
+                max_change = 6.0  # Allow more change for sharp turns (in degrees)
+            elif lateral_offset > 1.5:
+                max_change = 5.5  # Moderate change for turns
             else:
-                # Normal rate limiting
-                max_change = 4.5  # degrees
+                max_change = 4.5  # Normal rate limiting
             
             # Apply rate limiting
             if abs(smoothed - self.last_steering) > max_change:
@@ -1287,19 +1149,20 @@ class PurePursuitController:
             print(f"Error updating distance: {e}")
     
     def control_vehicle(self, cone_detections):
-        """Main control function - NOW PUBLISHES TO ROS2 TOPICS with enhanced lost track recovery"""
+        """ENHANCED: Main control function with Node 1's enhanced lost track recovery patterns"""
         try:
             print(f"\n{'='*60}")
-            print(f"DEBUG: CONTROL CYCLE - {len(cone_detections) if cone_detections else 0} detections from ZED 2i")
+            print(f"DEBUG: ENHANCED CONTROL CYCLE - {len(cone_detections) if cone_detections else 0} detections from ZED 2i")
             print(f"Laps completed: {self.lap_counter.laps_completed}")
             print(f"Current turn type: {self.current_turn_type}, Direction: {self.turn_direction}")
             print(f"Lost track counter: {self.lost_track_counter}")
+            print(f"Using Node 1's strict filtering and immediate response approach")
             print(f"{'='*60}")
             
             # Update distance traveled
             self.update_distance_traveled()
             
-            # Process cone detections (includes orange cones) - FIXED FOR ZED 2I
+            # ENHANCED: Process cone detections with Node 1's strict filtering
             blue_cones, yellow_cones, orange_cones = self.process_cone_detections(cone_detections)
             print(f"DEBUG: Processed cones - Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}")
             
@@ -1309,42 +1172,36 @@ class PurePursuitController:
                 vehicle_position = (transform.location.x, transform.location.y, transform.location.z)
                 self.lap_counter.check_orange_gate_passage(orange_cones, vehicle_position)
             
-            # NEW: Enhanced lost track detection with immediate recovery steering
+            # ENHANCED: Lost track detection with Node 1's immediate recovery steering
             if len(blue_cones) == 0 and len(yellow_cones) == 0:
                 self.lost_track_counter += 1
                 print(f"DEBUG: NO CONES DETECTED - lost track for {self.lost_track_counter} frames")
                 
-                # Immediate aggressive steering to try to find cones again
+                # Node 1's immediate aggressive steering to try to find cones again
                 if self.lost_track_counter <= 10:
                     # Try to steer in the direction we were last going
-                    recovery_steering = self.last_steering * 1.5  # Amplify last steering
                     recovery_steering = np.clip(recovery_steering, -24.0, 24.0)
-                    print(f"DEBUG: Applying recovery steering: {recovery_steering:.3f}°")
+                    print(f"DEBUG: Applying Node 1 recovery steering: {recovery_steering:.3f}°")
                     
                     self.publish_control_targets(0.0, 5.0, 1.5, recovery_steering)
                     return recovery_steering, 1.5
                 elif self.lost_track_counter <= 20:
                     # More aggressive search pattern
                     search_steering = 18.0 * np.sin(self.lost_track_counter * 0.3)
-                    print(f"DEBUG: Applying aggressive search pattern: {search_steering:.3f}°")
+                    print(f"DEBUG: Applying Node 1 aggressive search pattern: {search_steering:.3f}°")
                     
                     self.publish_control_targets(0.0, 5.0, 1.2, search_steering)
                     return search_steering, 1.2
                 else:
                     # Last resort - wide search
                     search_steering = 24.0 * np.sin(self.lost_track_counter * 0.2)
-                    print(f"DEBUG: Applying wide search pattern: {search_steering:.3f}°")
+                    print(f"DEBUG: Applying Node 1 wide search pattern: {search_steering:.3f}°")
                     
                     self.publish_control_targets(0.0, 5.0, 0.8, search_steering)
                     return search_steering, 0.8
             
-            # Try to find a track segment
-            track_segment = self.find_best_track_segment(blue_cones, yellow_cones)
-            
-            # If no track segment found, try cone line following
-            if not track_segment and (blue_cones or yellow_cones):
-                track_segment = self.follow_cone_line(blue_cones, yellow_cones)
-                print("DEBUG: Using cone line following")
+            # ENHANCED: Try to find a track segment using Node 1's immediate midpoint approach
+            track_segment = self.calculate_smooth_cone_target(blue_cones, yellow_cones)
             
             if not track_segment:
                 self.lost_track_counter += 1
@@ -1364,25 +1221,21 @@ class PurePursuitController:
             # Reset lost track counter if we found something
             self.lost_track_counter = 0
             
-            # Detect turn type and calculate path widening
-            turn_type, turn_direction, path_offset = self.detect_turn_type(track_segment, blue_cones, yellow_cones)
+            # ENHANCED: Detect turn type using Node 1's immediate cone pattern analysis
+            turn_type, turn_direction, path_offset = self.detect_turn_type_from_cones(blue_cones, yellow_cones)
             self.current_turn_type = turn_type
             self.turn_direction = turn_direction
             self.path_offset = path_offset
             
-            # Adjust target point for wider turns
-            original_target_x = track_segment['midpoint_x']
-            original_target_y = track_segment['midpoint_y']
+            # Get target point from Node 1's smooth cone following
+            target_x = track_segment['midpoint_x']
+            target_y = track_segment['midpoint_y']
             
-            # NEW: Store current target for visibility calculations
-            self.current_target_x = original_target_x
+            # Store current target for calculations
+            self.current_target_x = target_x
             
-            adjusted_target_x, adjusted_target_y = self.adjust_target_for_turn(
-                original_target_x, original_target_y, turn_type, turn_direction, path_offset
-            )
-            
-            # Navigate towards the adjusted target
-            raw_steering = self.calculate_pure_pursuit_steering(adjusted_target_x, adjusted_target_y)
+            # Navigate towards the target using Node 1's approach
+            raw_steering = self.calculate_pure_pursuit_steering(target_x, target_y)
             smooth_steering = self.smooth_steering(raw_steering)
             
             # Calculate adaptive speed based on turn type
@@ -1390,30 +1243,28 @@ class PurePursuitController:
             target_speed = self.calculate_adaptive_speed(turn_type, smooth_steering, current_depth)
             
             # PUBLISH TO ROS2 TOPICS INSTEAD OF APPLYING TO CARLA VEHICLE
-            self.publish_control_targets(adjusted_target_x, adjusted_target_y, target_speed, smooth_steering)
+            self.publish_control_targets(target_x, target_y, target_speed, smooth_steering)
             
-            # Enhanced debug output
+            # Enhanced debug output with Node 1 features
             direction = 'LEFT' if smooth_steering > 0 else 'RIGHT' if smooth_steering < 0 else 'STRAIGHT'
             
-            print(f"DEBUG: PUBLISHED CONTROL TARGETS TO ROS2:")
-            print(f"  Navigation: {track_segment.get('type', 'track_segment')}_{turn_type}")
-            print(f"  Turn Analysis: {turn_type}-{turn_direction} (offset: {path_offset:.2f}m)")
-            print(f"  Original target: ({original_target_x:.2f}, {original_target_y:.2f})")
-            print(f"  Adjusted target: ({adjusted_target_x:.2f}, {adjusted_target_y:.2f})")
+            print(f"DEBUG: PUBLISHED ENHANCED CONTROL TARGETS TO ROS2:")
+            print(f"  Navigation: {track_segment.get('type', 'immediate_midpoint')}_{turn_type}")
+            print(f"  Turn Analysis: {turn_type}-{turn_direction} (Node 1 limited 3-cone approach)")
+            print(f"  Target: ({target_x:.2f}, {target_y:.2f})")
             print(f"  Target distance: {current_depth:.2f}m")
             print(f"  Turn radius: {self.calculate_turn_radius(np.radians(smooth_steering)):.2f}m")
             print(f"  Steering: {smooth_steering:.3f}° ({direction})")
-            print(f"  Cone visibility risk: {'HIGH' if abs(original_target_x) > 2.5 else 'MODERATE' if abs(original_target_x) > 1.8 else 'LOW'}")
             print(f"  Target Speed: {target_speed:.1f} m/s ({target_speed*3.6:.1f} km/h)")
             print(f"  Distance: {self.distance_traveled:.1f}m")
             print(f"  Laps: {self.lap_counter.laps_completed}")
-            print(f"  PUBLISHED TO ROS2 TOPICS")
+            print(f"  PUBLISHED TO ROS2 TOPICS WITH NODE 1 ENHANCEMENTS")
             print(f"{'='*60}\n")
             
             return smooth_steering, target_speed
             
         except Exception as e:
-            print(f"ERROR in vehicle control: {e}")
+            print(f"ERROR in enhanced vehicle control: {e}")
             import traceback
             traceback.print_exc()
             # Safe fallback - publish emergency stop
@@ -1443,7 +1294,7 @@ class CarlaRacingSystemROS2(Node):
         # Setup signal handler for clean shutdown
         signal.signal(signal.SIGINT, self.signal_handler)
         
-        self.get_logger().info("CARLA Racing System ROS2 Node initialized")
+        self.get_logger().info("Enhanced CARLA Racing System ROS2 Node with Node 1 improvements initialized")
         self.get_logger().info(f"YOLO model path: {model_path}")
         
     def declare_all_parameters(self):
@@ -1481,15 +1332,15 @@ class CarlaRacingSystemROS2(Node):
         self.declare_parameter('camera.fps', 30,
                               descriptor=ParameterDescriptor(description='Camera frames per second'))
         
-        # Detection parameters
-        self.declare_parameter('detection.safety_offset', 0.5,
+        # ENHANCED: Detection parameters with Node 1's strict values as defaults
+        self.declare_parameter('detection.safety_offset', 1.75,
                               descriptor=ParameterDescriptor(description='Safety offset from cones in meters'))
         self.declare_parameter('detection.max_depth', 8.0,
-                              descriptor=ParameterDescriptor(description='Maximum cone detection range in meters'))
+                              descriptor=ParameterDescriptor(description='Maximum cone detection range in meters (Node 1: strict 8.0m)'))
         self.declare_parameter('detection.min_depth', 1.5,
                               descriptor=ParameterDescriptor(description='Minimum cone detection range in meters'))
-        self.declare_parameter('detection.max_lateral_distance', 4.0,
-                              descriptor=ParameterDescriptor(description='Maximum lateral distance from vehicle center in meters'))
+        self.declare_parameter('detection.max_lateral_distance', 3.0,
+                              descriptor=ParameterDescriptor(description='Maximum lateral distance from vehicle center in meters (Node 1: strict 3.0m)'))
         
         # Turn parameters
         self.declare_parameter('turns.min_turn_radius', 3.5,
@@ -1500,7 +1351,7 @@ class CarlaRacingSystemROS2(Node):
                               descriptor=ParameterDescriptor(description='Angle threshold for sharp turns in degrees'))
         self.declare_parameter('turns.u_turn_threshold', 60.0,
                               descriptor=ParameterDescriptor(description='Angle threshold for U-turns in degrees'))
-        self.declare_parameter('turns.turn_detection_distance', 6.0,
+        self.declare_parameter('turns.turn_detection_distance', 8.0,
                               descriptor=ParameterDescriptor(description='Distance to look ahead for turn detection in meters'))
         
         # Track parameters
@@ -1513,7 +1364,7 @@ class CarlaRacingSystemROS2(Node):
         self.declare_parameter('track.max_lateral_jump', 1.5,
                               descriptor=ParameterDescriptor(description='Maximum lateral movement between consecutive gates in meters'))
         self.declare_parameter('track.forward_focus_angle', 30.0,
-                              descriptor=ParameterDescriptor(description='Only consider cones within this angle from vehicle heading in degrees'))
+                              descriptor=ParameterDescriptor(description='Only consider cones within this angle from vehicle heading in degrees (Node 1: strict 30.0°)'))
         
         # Visibility parameters
         self.declare_parameter('visibility.high_risk_threshold', 2.5,
@@ -1558,7 +1409,7 @@ class CarlaRacingSystemROS2(Node):
         self.declare_parameter('debug.log_level', 'INFO',
                               descriptor=ParameterDescriptor(description='ROS logging level (DEBUG, INFO, WARN, ERROR)'))
         
-        self.get_logger().info("✅ All ROS2 parameters declared successfully")
+        self.get_logger().info("✅ All ROS2 parameters declared successfully with Node 1 enhancements")
     
     def signal_handler(self, signum, frame):
         """Handle Ctrl+C for clean shutdown"""
@@ -1620,7 +1471,7 @@ class CarlaRacingSystemROS2(Node):
             return None
     
     def setup_camera_and_controller(self):
-        """Setup ZED 2i camera and robust controller with YOLO model"""
+        """Setup ZED 2i camera and enhanced controller with YOLO model and Node 1 improvements"""
         try:
             # Get camera parameters
             resolution_width = self.get_parameter('camera.resolution_width').get_parameter_value().integer_value
@@ -1639,12 +1490,12 @@ class CarlaRacingSystemROS2(Node):
             if not self.camera.setup():
                 raise RuntimeError("Failed to setup camera")
                 
-            # Setup robust controller with ROS2 node reference
+            # Setup enhanced controller with ROS2 node reference and Node 1 improvements
             lookahead_distance = self.get_parameter('control.lookahead_distance').get_parameter_value().double_value
             self.controller = PurePursuitController(self.vehicle, self, lookahead_distance)
-            self.get_logger().info("Camera with YOLO model and robust controller setup complete")
+            self.get_logger().info("Camera with YOLO model and enhanced controller with Node 1 improvements setup complete")
             self.get_logger().info(f"YOLO model loaded: {self.model_path}")
-            self.get_logger().info("CONTROLLER NOW PUBLISHES TO ROS2 TOPICS")
+            self.get_logger().info("CONTROLLER NOW PUBLISHES TO ROS2 TOPICS WITH NODE 1 ENHANCEMENTS")
             
             return True
             
@@ -1653,8 +1504,8 @@ class CarlaRacingSystemROS2(Node):
             return False
     
     def control_loop(self):
-        """Main control loop for vehicle with YOLO detection"""
-        self.get_logger().info("Starting control loop with YOLO detection...")
+        """Main control loop for vehicle with YOLO detection and Node 1 enhancements"""
+        self.get_logger().info("Starting enhanced control loop with YOLO detection and Node 1 improvements...")
         
         # Get control loop frequency from parameters
         control_hz = self.get_parameter('system.control_loop_hz').get_parameter_value().double_value
@@ -1676,7 +1527,7 @@ class CarlaRacingSystemROS2(Node):
                         sample_detection = cone_detections[0]
                         self.get_logger().debug(f"Sample detection format: {sample_detection}")
                 
-                # Control vehicle using robust controller - NOW PUBLISHES TO ROS2
+                # Control vehicle using enhanced controller with Node 1 improvements - NOW PUBLISHES TO ROS2
                 steering, speed = self.controller.control_vehicle(cone_detections)
                 
                 time.sleep(control_period)
@@ -1686,8 +1537,8 @@ class CarlaRacingSystemROS2(Node):
                 time.sleep(0.1)  # Brief pause before retrying
     
     def display_loop(self):
-        """Display camera feed with detections"""
-        self.get_logger().info("Starting display loop...")
+        """Display camera feed with detections and Node 1 enhancements"""
+        self.get_logger().info("Starting display loop with Node 1 enhancements...")
         
         # Check if visualization is enabled
         enable_visualization = self.get_parameter('system.enable_visualization').get_parameter_value().bool_value
@@ -1705,7 +1556,7 @@ class CarlaRacingSystemROS2(Node):
                     # Create visualization
                     viz_image = self.create_visualization()
                     
-                    cv2.imshow('CARLA Racing with ROS2 Output - ZED 2i Enhanced Controller', viz_image)
+                    cv2.imshow('CARLA Racing with ROS2 Output - Enhanced with Node 1 Improvements', viz_image)
                     
                     # Check for exit key
                     if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -1719,7 +1570,7 @@ class CarlaRacingSystemROS2(Node):
                 time.sleep(0.1)  # Brief pause before retrying
     
     def create_visualization(self):
-        """Create visualization with YOLO detections and enhanced error handling"""
+        """Create visualization with YOLO detections and Node 1 enhancements"""
         try:
             if not hasattr(self.camera, 'rgb_image') or self.camera.rgb_image is None:
                 return np.zeros((720, 1280, 3), dtype=np.uint8)
@@ -1727,21 +1578,19 @@ class CarlaRacingSystemROS2(Node):
             viz_image = self.camera.rgb_image.copy()
             
             # Add vehicle info at the top
-            vehicle_info = f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id}) - ROS2 OUTPUT MODE - ZED 2i"
+            vehicle_info = f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id}) - ROS2 OUTPUT with Node 1 Enhancements - ZED 2i"
             cv2.putText(viz_image, vehicle_info, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
-            # Process detections for visualization - ZED 2i format
+            # Process detections for visualization - ZED 2i format with Node 1 filtering
             cone_detections = getattr(self.camera, 'cone_detections', [])
             if cone_detections:
                 blue_cones, yellow_cones, orange_cones = self.controller.process_cone_detections(cone_detections)
                 
                 # The ZED 2i already draws detection boxes in its own visualization
-                # Just add our additional tracking info
+                # Just add our additional tracking info with Node 1 approach
                 
-                # Try to find current target
-                track_segment = self.controller.find_best_track_segment(blue_cones, yellow_cones)
-                if not track_segment and (blue_cones or yellow_cones):
-                    track_segment = self.controller.follow_cone_line(blue_cones, yellow_cones)
+                # Try to find current target using Node 1's immediate midpoint approach
+                track_segment = self.controller.calculate_smooth_cone_target(blue_cones, yellow_cones)
                 
                 # Draw target if found
                 if track_segment:
@@ -1754,67 +1603,48 @@ class CarlaRacingSystemROS2(Node):
                     py = max(50, min(py, 720))
                     px = max(0, min(px, 1280))
                     
-                    # Different colors for different navigation types
-                    if track_segment.get('type') == 'cone_line':
-                        color = (255, 0, 255)  # Magenta for cone line following
-                        text = "CONE LINE"
-                    else:
-                        color = (0, 0, 255)    # Red for track segment
-                        text = "TRACK TARGET"
+                    # Color for Node 1 enhanced navigation
+                    color = (255, 0, 255)  # Magenta for Node 1 enhanced immediate midpoint
+                    text = "NODE 1 TARGET"
                     
                     cv2.circle(viz_image, (px, py), 15, color, -1)
                     cv2.putText(viz_image, text, (px+20, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
             
-            # Add enhanced status text with ZED 2i info and visibility metrics
+            # Add enhanced status text with Node 1 info and cone filtering metrics
             velocity = self.vehicle.get_velocity()
             current_speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
             
-            # Calculate cone visibility risk
+            # Calculate Node 1 cone filtering statistics
             cone_detections = getattr(self.camera, 'cone_detections', [])
             blue_cones, yellow_cones, orange_cones = self.controller.process_cone_detections(cone_detections)
             
-            visibility_risk = "LOW"
-            if hasattr(self.controller, 'current_target_x'):
-                lateral_offset = abs(self.controller.current_target_x)
-                if lateral_offset > 2.5:
-                    visibility_risk = "HIGH"
-                elif lateral_offset > 1.8:
-                    visibility_risk = "MODERATE"
-            
             status_text = [
-                f"Mode: ROS2 OUTPUT MODE (ZED 2i Enhanced)",
+                f"Mode: ROS2 OUTPUT with Node 1 Enhancements (ZED 2i)",
                 f"YOLO Model: {self.model_path.split('/')[-1] if self.model_path else 'Not loaded'}",
                 f"ZED 2i Detections: {len(cone_detections)} total",
-                f"Blue: {len([d for d in cone_detections if d.get('cls') == 1])}, "
-                f"Yellow: {len([d for d in cone_detections if d.get('cls') == 0])}, "
-                f"Orange: {len([d for d in cone_detections if d.get('cls') == 2])}",
+                f"Node 1 Filtered: Blue: {len(blue_cones)}, Yellow: {len(yellow_cones)}, Orange: {len(orange_cones)}",
+                f"Node 1 Features: Strict 3.0m lateral, 30° angle, immediate focus",
                 f"Laps Completed: {self.controller.lap_counter.laps_completed}",
                 f"Current Speed: {current_speed:.1f} m/s ({current_speed*3.6:.1f} km/h)",
                 f"Distance: {self.controller.distance_traveled:.1f}m",
                 f"Last Steering: {self.controller.last_steering:.3f}°",
-                f"Cone Visibility Risk: {visibility_risk}",
                 f"Lost Track: {self.controller.lost_track_counter}",
-                f"Publishing to ROS2 Topics"
+                f"Publishing to ROS2 Topics with Node 1 Logic"
             ]
             
             for i, text in enumerate(status_text):
                 y_pos = 50 + i*20  # Start lower to avoid vehicle info
                 color = (0, 255, 0)
                 if i == 0:  # Mode info
-                    color = (255, 0, 255)  # Magenta for ROS2 mode
+                    color = (255, 0, 255)  # Magenta for enhanced ROS2 mode
                 elif i == 1:  # YOLO model info
                     color = (0, 255, 255)  # Cyan for YOLO
                 elif i == 2 or i == 3:  # Detection info
                     color = (255, 255, 0)  # Yellow for detections
-                elif i == 4:  # Lap counter
+                elif i == 4:  # Node 1 features
+                    color = (255, 100, 255)  # Pink for Node 1 features
+                elif i == 5:  # Lap counter
                     color = (0, 255, 0)  # Green for lap counter
-                elif i == 8:  # Cone visibility risk
-                    if "HIGH" in text:
-                        color = (0, 0, 255)  # Red for high risk
-                    elif "MODERATE" in text:
-                        color = (0, 255, 255)  # Cyan for moderate risk
-                    else:
-                        color = (0, 255, 0)  # Green for low risk
                 elif i == 9:  # Lost track counter
                     color = (255, 0, 0) if self.controller.lost_track_counter > 10 else (0, 255, 0)
                 elif i == 10:  # ROS output indicator
@@ -1828,31 +1658,31 @@ class CarlaRacingSystemROS2(Node):
             self.get_logger().error(f"Error creating visualization: {e}")
             # Return a blank image if visualization fails
             blank_image = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.putText(blank_image, "Visualization Error", (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+            cv2.putText(blank_image, "Enhanced Visualization Error", (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
             return blank_image
     
     def run_system(self):
-        """Main execution function"""
+        """Main execution function with Node 1 enhancements"""
         try:
             # Setup CARLA
             if not self.setup_carla():
                 return False
             
-            # Setup camera and controller with YOLO
+            # Setup camera and controller with YOLO and Node 1 enhancements
             if not self.setup_camera_and_controller():
                 return False
             
             # Log all parameter values for debugging
             self.log_parameter_values()
             
-            self.get_logger().info("System ready! Using existing vehicle for racing with ROS2 output.")
+            self.get_logger().info("Enhanced system ready! Using existing vehicle for racing with ROS2 output and Node 1 improvements.")
             self.get_logger().info(f"Vehicle: {self.vehicle.type_id} (ID: {self.vehicle.id})")
             self.get_logger().info(f"YOLO model: {self.model_path}")
             self.get_logger().info("🟠 Orange cones will be detected for lap counting")
             self.get_logger().info("🔍 ZED 2i YOLO model running for cone detection")
-            self.get_logger().info("🚗 Enhanced steering with cone visibility preservation")
-            self.get_logger().info("🎯 Advanced lost track recovery patterns")
-            self.get_logger().info("🤖 Controller publishes to ROS2 topics:")
+            self.get_logger().info("🎯 Enhanced with Node 1's strict filtering and immediate response")
+            self.get_logger().info("🔧 Node 1 improvements: Immediate track focus, strict cone filtering, early turn detection")
+            self.get_logger().info("🤖 Controller publishes to ROS2 topics with Node 1 logic:")
             self.get_logger().info("   - /planning/target_speed (std_msgs/Float64)")
             self.get_logger().info("   - /planning/target_position (geometry_msgs/Point)")
             self.get_logger().info("   - /planning/reference_steering (std_msgs/Float64)")
@@ -1876,14 +1706,14 @@ class CarlaRacingSystemROS2(Node):
             return True
             
         except Exception as e:
-            self.get_logger().error(f"Error running system: {e}")
+            self.get_logger().error(f"Error running enhanced system: {e}")
             return False
         finally:
             self.cleanup()
     
     def log_parameter_values(self):
         """Log all parameter values for debugging"""
-        self.get_logger().info("📋 Current parameter values:")
+        self.get_logger().info("📋 Current parameter values with Node 1 enhancements:")
         
         # Get all parameters
         param_names = [
@@ -1910,7 +1740,7 @@ class CarlaRacingSystemROS2(Node):
     
     def cleanup(self):
         """Clean up all resources"""
-        self.get_logger().info("Cleaning up resources...")
+        self.get_logger().info("Cleaning up enhanced system resources...")
         
         self.running = False
         
@@ -1932,25 +1762,26 @@ class CarlaRacingSystemROS2(Node):
         except:
             pass
         
-        self.get_logger().info("Cleanup complete - ROS2 topics will stop publishing")
+        self.get_logger().info("Enhanced cleanup complete - ROS2 topics will stop publishing with Node 1 improvements")
 
 def main(args=None):
-    """Main function for ROS2"""
+    """Main function for enhanced ROS2 with Node 1 improvements"""
     rclpy.init(args=args)
     
     # Default YOLO model path
     model_path = '/home/aditya/hydrakon_ws/src/planning_module/planning_module/best.pt'
     
     print(f"Using YOLO model: {model_path}")
+    print("Enhanced with Node 1's strict filtering and immediate response algorithms")
     
     racing_system = CarlaRacingSystemROS2(model_path=model_path)
     
     try:
         success = racing_system.run_system()
         if success:
-            racing_system.get_logger().info("Racing system with ROS2 output completed successfully")
+            racing_system.get_logger().info("Enhanced racing system with ROS2 output and Node 1 improvements completed successfully")
         else:
-            racing_system.get_logger().error("Racing system with ROS2 output failed to start")
+            racing_system.get_logger().error("Enhanced racing system with ROS2 output and Node 1 improvements failed to start")
     except KeyboardInterrupt:
         racing_system.get_logger().info("Received interrupt signal")
     except Exception as e:

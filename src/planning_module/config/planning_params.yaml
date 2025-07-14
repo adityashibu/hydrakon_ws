@@ -1,89 +1,234 @@
-# CARLA Racing System Parameters - Enhanced Version with All Parameters
-# Node name must match the name used in launch file
-planning_node: # This matches the name used in launch file
+# =============================================================================
+# ENHANCED RACING SYSTEM CONFIGURATION - ROS2 PARAMETERS
+# Node 2 with Node 1 Control Logic Enhancements
+# =============================================================================
+
+# This configuration file contains Node 1's simple and effective control logic
+# adapted for ROS2 parameter system, while maintaining Node 2's architecture
+
+carla_racing_system:
   ros__parameters:
-    # Vehicle parameters
-    vehicle:
-      wheelbase: 2.7 # meters
-      max_steering_degrees: 30.0 # degrees
     
-    # Control parameters
-    control:
-      max_speed: 6.0 # m/s
-      min_speed: 4.0 # m/s
-      lookahead_distance: 4.0 # Pure pursuit lookahead distance in meters
-    
-    # Camera parameters
-    camera:
-      fov_horizontal: 110.0 # degrees - ZED 2i FOV
-      resolution_width: 1280 # pixels
-      resolution_height: 720 # pixels
-      fps: 30 # frames per second
-    
-    # Detection parameters
-    detection:
-      safety_offset: 0.5 # meters from cones
-      max_depth: 8.0 # maximum cone detection range
-      min_depth: 1.5 # minimum cone detection range
-      max_lateral_distance: 4.0 # maximum lateral distance from vehicle center
-    
-    # Turn parameters
-    turns:
-      min_turn_radius: 3.5 # minimum safe turning radius (meters)
-      path_widening_factor: 1.8 # how much to widen the path in turns
-      sharp_turn_threshold: 25.0 # angle threshold for sharp turns (degrees)
-      u_turn_threshold: 60.0 # angle threshold for U-turns (degrees)
-      turn_detection_distance: 6.0 # distance to look ahead for turn detection
-    
-    # Track parameters
-    track:
-      width_min: 3.0 # minimum track width (meters)
-      width_max: 5.0 # maximum track width (meters)
-      max_depth_diff: 1.0 # maximum depth difference between gate cones
-      max_lateral_jump: 1.5 # maximum lateral movement between consecutive gates
-      forward_focus_angle: 30.0 # only consider cones within this angle (degrees)
-    
-    # Visibility parameters
-    visibility:
-      high_risk_threshold: 2.5 # high risk threshold for cone visibility
-      moderate_risk_threshold: 1.8 # moderate risk threshold for cone visibility
-      visibility_steering_boost: 0.6 # steering boost factor for cone visibility preservation
-      high_risk_factor: 1.4 # high risk steering factor multiplier
-      moderate_risk_factor: 1.2 # moderate risk steering factor multiplier
-    
-    # Recovery parameters
-    recovery:
-      max_lost_track_frames: 20 # maximum frames before triggering emergency stop
-      recovery_steering_multiplier: 1.5 # steering multiplier for track recovery
-      aggressive_search_amplitude: 18.0 # amplitude for aggressive search pattern (degrees)
-      wide_search_amplitude: 24.0 # amplitude for wide search pattern (degrees)
-    
-    # Lap counter parameters - ENHANCED WITH MISSING PARAMETERS
+    # =============================================================================
+    # LAP AND TARGET CONFIGURATION (From Node 1 approach)
+    # =============================================================================
     lap_counter:
-      cooldown_duration: 3.0 # cooldown duration between lap counts (seconds)
-      orange_gate_threshold: 2.0 # distance threshold for passing through orange gate
-      min_lap_time: 3.0 # minimum lap time for validation (seconds) - MISSING
-      target_laps: 10 # target number of laps (0 = unlimited) - MISSING
-    
-    # System parameters - ENHANCED WITH MISSING PARAMETERS
+      target_laps: 10                    # Set to 0 for unlimited laps, or any number (e.g., 1, 3, 5, 10)
+      min_lap_time: 150.0               # Minimum seconds for a lap to be considered valid (Node 1: 150.0)
+      speed_sample_interval: 0.5        # Speed sampling interval in seconds
+      cooldown_duration: 3.0            # Cooldown between orange gate detections in seconds
+      orange_gate_threshold: 2.0        # Distance threshold for orange gate passage in meters
+
+    # =============================================================================
+    # VEHICLE PARAMETERS
+    # =============================================================================
+    vehicle:
+      wheelbase: 2.7                    # Vehicle wheelbase in meters
+      max_steering_degrees: 30.0        # Maximum steering angle in degrees
+
+    # =============================================================================
+    # CONTROL PARAMETERS (Node 1's conservative approach)
+    # =============================================================================
+    control:
+      max_speed: 6.0                    # Maximum vehicle speed in m/s (Node 1: conservative 3.0 vs Node 2: 8.0)
+      min_speed: 4.0                    # Minimum vehicle speed in m/s (same as Node 1)
+      lookahead_distance: 4.0           # Pure pursuit lookahead distance in meters
+
+    # =============================================================================
+    # CAMERA PARAMETERS
+    # =============================================================================
+    camera:
+      fov_horizontal: 90.0              # Camera horizontal field of view in degrees (Node 1: 90.0)
+      resolution_width: 1280            # Camera resolution width in pixels
+      resolution_height: 720            # Camera resolution height in pixels
+      fps: 30                          # Camera frames per second
+
+    # =============================================================================
+    # ENHANCED DETECTION PARAMETERS (Node 1's strict immediate focus)
+    # =============================================================================
+    detection:
+      safety_offset: 1.75               # Safety offset from cones in meters
+      max_depth: 8.0                    # Maximum cone detection range - Node 1's immediate focus
+      min_depth: 1.5                    # Minimum cone detection range
+      max_lateral_distance: 3.0         # Node 1's STRICT 3.0m (vs Node 2's 4.0m) - immediate track only
+
+    # =============================================================================
+    # TURN PARAMETERS (Node 1's simple approach)
+    # =============================================================================
+    turns:
+      min_turn_radius: 3.5              # Minimum safe turning radius (meters)
+      path_widening_factor: 1.0         # Node 1: No path widening (vs Node 2: 1.8) - centerline focus
+      sharp_turn_threshold: 25.0        # Angle threshold for sharp turns (degrees)
+      u_turn_threshold: 60.0            # Angle threshold for U-turns (degrees)
+      turn_detection_distance: 8.0      # Distance to look ahead for turn detection
+
+    # =============================================================================
+    # TRACK PARAMETERS (Node 1's strict immediate track validation)
+    # =============================================================================
+    track:
+      width_min: 3.0                    # Minimum track width (meters)
+      width_max: 5.0                    # Maximum track width (meters)
+      max_depth_diff: 1.0               # Maximum depth difference between gate cones
+      max_lateral_jump: 1.5             # Maximum lateral movement between consecutive gates
+      forward_focus_angle: 30.0         # Node 1's STRICT 30.0° (vs Node 2's flexible) - immediate focus
+
+    # =============================================================================
+    # CONE POSITIONING PARAMETERS (Node 1's strict requirements)
+    # =============================================================================
+    cone_positioning:
+      blue_cone_tolerance: 0.5          # Node 1's STRICT: Blue cone must be clearly left (vs Node 2: 1.0)
+      yellow_cone_tolerance: 0.5        # Node 1's STRICT: Yellow cone must be clearly right (vs Node 2: 1.0)
+      immediate_pair_depth_diff: 2.0    # Maximum depth difference for immediate cone pairs
+      immediate_track_depth: 6.0        # Maximum depth for immediate track section focus
+
+    # =============================================================================
+    # STEERING PARAMETERS (Node 1's immediate response approach)
+    # =============================================================================
+    steering:
+      centerline_forcing: true          # Node 1: Force targets to ±1.5m centerline
+      centerline_limit: 1.5             # Node 1's centerline forcing limit (meters)
+      early_turn_factor: 1.0            # Node 1's reduced factor for precise control
+      early_steering_boost: 0.4         # Node 1's early steering enhancement factor
+      smoothing_factor: 0.3             # Node 1's reduced smoothing for responsiveness
+
+    # =============================================================================
+    # STEERING SMOOTHING WEIGHTS (Node 1's turn-type based approach)
+    # =============================================================================
+    steering_smoothing:
+      sharp_turn_weights: [0.6, 0.25, 0.15]      # Node 1: More responsive for sharp turns
+      high_lateral_weights: [0.55, 0.3, 0.15]    # Node 1: Moderate for significant lateral movement
+      normal_weights: [0.5, 0.3, 0.2]            # Node 1: Balanced for normal following
+      
+      # Rate limiting (Node 1's adaptive approach)
+      sharp_turn_max_change: 6.0        # degrees - allow more change for sharp turns
+      moderate_turn_max_change: 5.5     # degrees - moderate change for turns
+      normal_max_change: 4.5            # degrees - normal rate limiting
+
+    # =============================================================================
+    # VISIBILITY PARAMETERS (kept from Node 2 but not heavily used in Node 1 logic)
+    # =============================================================================
+    visibility:
+      high_risk_threshold: 2.5          # High risk threshold for cone visibility in meters
+      moderate_risk_threshold: 1.8      # Moderate risk threshold for cone visibility in meters
+      visibility_steering_boost: 0.6    # Steering boost factor for cone visibility preservation
+      high_risk_factor: 1.4             # High risk steering factor multiplier
+      moderate_risk_factor: 1.2         # Moderate risk steering factor multiplier
+
+    # =============================================================================
+    # RECOVERY PARAMETERS (Node 1's aggressive immediate recovery)
+    # =============================================================================
+    recovery:
+      max_lost_track_frames: 20         # Maximum frames before triggering emergency stop
+      recovery_steering_multiplier: 1.5 # Node 1: Amplify last steering for immediate recovery
+      aggressive_search_amplitude: 18.0 # Node 1: ±18° aggressive search pattern
+      wide_search_amplitude: 24.0       # Node 1: ±24° wide search pattern
+      
+      # Recovery escalation thresholds (Node 1's approach)
+      immediate_recovery_frames: 10      # First 10 frames: amplified last steering
+      aggressive_search_frames: 20       # Next 10 frames: aggressive search
+      # After 20 frames: wide search pattern
+
+    # =============================================================================
+    # CONE SEQUENCE TRACKING (Node 1's limited immediate approach)
+    # =============================================================================
+    cone_tracking:
+      max_cone_sequence: 3              # Node 1: Limited to 3 cones (vs Node 2: 5 gates)
+      immediate_cone_limit: 3           # Only consider closest 3 cones for pattern analysis
+      limited_blue_cones: 2             # Node 1: Limit to first 2 blue cones for immediate focus
+      limited_yellow_cones: 2           # Node 1: Limit to first 2 yellow cones for immediate focus
+
+    # =============================================================================
+    # TURN CLASSIFICATION (Node 1's simple magnitude-based approach)
+    # =============================================================================
+    turn_classification:
+      straight_threshold: 0.3           # Node 1: Turn magnitude < 0.3 = straight
+      gentle_threshold: 0.8             # Node 1: Turn magnitude < 0.8 = gentle
+      # Above 0.8 = sharp turn
+      
+      # Path offsets (Node 1's simple approach)
+      gentle_path_offset: 0.4           # Node 1: Simple gentle turn offset
+      sharp_path_offset: 0.8            # Node 1: Simple sharp turn offset
+
+    # =============================================================================
+    # SPEED CONTROL (Node 1's adaptive approach)
+    # =============================================================================
+    speed_control:
+      base_speed_factor: 0.7            # Base speed = min + (max-min) * 0.7
+      
+      # Turn-based speed reduction (Node 1's approach)
+      gentle_turn_speed_factor: 0.8     # 80% speed for gentle turns
+      sharp_turn_speed_factor: 0.6      # 60% speed for sharp turns
+      
+      # Steering-based speed reduction
+      steering_speed_factor: 0.7        # Reduce speed by 70% * abs(steering_angle)
+      
+      # Distance-based speed reduction
+      close_distance_threshold: 6.0     # meters
+      very_close_threshold: 3.0         # meters
+      close_distance_factor: 0.7        # 70% speed when approaching targets
+      very_close_factor: 0.5            # 50% speed when very close
+
+    # =============================================================================
+    # SYSTEM PARAMETERS
+    # =============================================================================
     system:
-      control_loop_hz: 20.0 # control loop frequency (Hz)
-      display_loop_hz: 30.0 # display loop frequency (Hz)
-      enable_visualization: true # enable OpenCV visualization window
-      generate_analysis: true # generate comprehensive analysis on completion - MISSING
-    
-    # Analysis parameters - COMPLETELY MISSING SECTION
-    analysis:
-      chart_resolution: 300 # analysis chart DPI resolution - MISSING
-      save_directory: "./" # directory to save analysis charts - MISSING
-    
-    # CARLA connection parameters
+      control_loop_hz: 20.0             # Control loop frequency in Hz
+      display_loop_hz: 30.0             # Display loop frequency in Hz
+      enable_visualization: true        # Enable OpenCV visualization window
+
+    # =============================================================================
+    # CARLA CONNECTION PARAMETERS
+    # =============================================================================
     carla:
-      host: "localhost" # CARLA server host address
-      port: 2000 # CARLA server port number
-      timeout: 10.0 # CARLA connection timeout (seconds)
-    
-    # Debug parameters
+      host: 'localhost'                 # CARLA server host address
+      port: 2000                        # CARLA server port number
+      timeout: 10.0                     # CARLA connection timeout in seconds
+
+    # =============================================================================
+    # DEBUG PARAMETERS
+    # =============================================================================
     debug:
-      enable_debug_output: true # enable debug console output
-      log_level: "INFO" # ROS logging level (DEBUG, INFO, WARN, ERROR)
+      enable_debug_output: true         # Enable debug console output
+      log_level: 'INFO'                 # ROS logging level (DEBUG, INFO, WARN, ERROR)
+      
+      # Node 1 specific debug flags
+      debug_cone_filtering: true        # Debug Node 1's strict cone filtering
+      debug_centerline_forcing: true    # Debug Node 1's centerline forcing
+      debug_immediate_response: true    # Debug Node 1's immediate response logic
+      debug_turn_classification: true   # Debug Node 1's simple turn classification
+
+# =============================================================================
+# USAGE INSTRUCTIONS
+# =============================================================================
+# 
+# This configuration file implements Node 1's simple and effective control logic
+# within Node 2's ROS2 parameter system architecture.
+#
+# KEY NODE 1 FEATURES PRESERVED:
+# - Strict 3.0m lateral distance filtering (immediate track focus)
+# - 30° forward focus angle (no wide-angle cone detection)
+# - Centerline forcing (±1.5m limit)
+# - Limited cone sequence (3 cones vs 5 gates)
+# - Simple turn classification (magnitude-based)
+# - Immediate response steering (0.3 smoothing factor)
+# - Conservative speed limits (2-3 m/s vs 2-8 m/s)
+# - Aggressive recovery patterns (amplified steering)
+#
+# TO USE THIS CONFIG:
+# 1. Save as: config/enhanced_racing_params.yaml
+# 2. Launch with: ros2 launch <package> <launch_file> --ros-args --params-file config/enhanced_racing_params.yaml
+# 3. Or use ros2 param load: ros2 param load /carla_racing_system config/enhanced_racing_params.yaml
+#
+# TO MODIFY BEHAVIOR:
+# - Increase max_lateral_distance to 4.0 for more lenient cone detection
+# - Disable centerline_forcing for more flexible path planning
+# - Increase max_speed to 8.0 for Node 2's aggressive speed
+# - Increase max_cone_sequence to 5 for Node 2's sophisticated turn prediction
+# - Decrease min_lap_time to 3.0 for more sensitive lap detection
+#
+# SAFETY NOTES:
+# - These parameters implement Node 1's conservative approach
+# - Suitable for initial testing and safe operation
+# - Gradual parameter tuning recommended for performance optimization
+#
+# =============================================================================

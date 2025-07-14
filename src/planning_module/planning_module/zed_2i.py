@@ -64,7 +64,7 @@ class Zed2iCamera:
                 print(bp.id)
             
             # Base transform for camera mount
-            base_transform = carla.Transform(carla.Location(x=1.5, z=1.8))
+            base_transform = carla.Transform(carla.Location(x=-1.2, z=0.8))
             
             # === LEFT RGB CAMERA (ZED 2i Left Eye) ===
             left_rgb_bp = blueprint_library.find('sensor.camera.rgb')
